@@ -1,4 +1,7 @@
 # MORAI 데이터 수집 자동화
+실행 명령어
+python3 collect.py --zone urban --scenario stop_and_go --episodes 10
+
 
 ## 폴더 구조
 

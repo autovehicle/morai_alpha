@@ -34,7 +34,7 @@ try:
         EgoVehicleStatus,
         ObjectStatusList,
         GPSMessage,
-        TrafficLightStatus,
+        GetTrafficLightStatus,
     )
     ROS_AVAILABLE = True
 except ImportError:
@@ -112,23 +112,36 @@ class ROSManager:
                              self._cb_gnss_navsatfix, queue_size=5)
 
         # IMU
-        rospy.Subscriber(self.topics["imu"], Imu,
-                         self._cb_imu, queue_size=5)
+        try:
+            rospy.Subscriber(self.topics["imu"], Imu,
+                             self._cb_imu, queue_size=5)
+        except Exception as e:
+            print(f"[ROSManager] IMU 구독 실패: {e}")
 
         # GT 객체
-        rospy.Subscriber(self.topics["gt_objects"], ObjectStatusList,
-                         self._cb_objects, queue_size=2)
+        try:
+            rospy.Subscriber(self.topics["gt_objects"], ObjectStatusList,
+                             self._cb_objects, queue_size=2)
+        except Exception as e:
+            print(f"[ROSManager] GT Objects 구독 실패: {e}")
 
         # 신호등
-        rospy.Subscriber(self.topics["traffic_light"], TrafficLightStatus,
-                         self._cb_traffic_light, queue_size=2)
+        try:
+            rospy.Subscriber(self.topics["traffic_light"], GetTrafficLightStatus,
+                             self._cb_traffic_light, queue_size=2)
+        except Exception as e:
+            print(f"[ROSManager] 신호등 구독 실패: {e}")
 
         # Ego 상태
-        rospy.Subscriber(self.topics["ego_state"], EgoVehicleStatus,
-                         self._cb_ego, queue_size=5)
+        try:
+            rospy.Subscriber(self.topics["ego_state"], EgoVehicleStatus,
+                             self._cb_ego, queue_size=5)
+        except Exception as e:
+            print(f"[ROSManager] Ego 구독 실패: {e}")
 
         self._initialized = True
         print("[ROSManager] 구독 시작 완료")
+        print(f"[ROSManager] ego_state 토픽: {self.topics['ego_state']}")
 
         # 콜백 실행을 위한 spin 스레드
         self._spin_thread = threading.Thread(target=rospy.spin, daemon=True)
@@ -183,6 +196,7 @@ class ROSManager:
             if self._cameras and self._ego:
                 return True
             time.sleep(0.05)
+        print(f"[DEBUG] cameras={bool(self._cameras)}  ego={self._ego is not None}")
         return False
 
     # ── ROS 콜백 ─────────────────────────────────────────────
@@ -292,7 +306,7 @@ class ROSManager:
         except Exception as e:
             print(f"[ROSManager] GT Objects 콜백 오류: {e}")
 
-    def _cb_traffic_light(self, msg: "TrafficLightStatus"):
+    def _cb_traffic_light(self, msg: "GetTrafficLightStatus"):
         """
         morai_msgs/TrafficLightStatus 기준.
         msg.trafficLightIndex: 신호등 ID

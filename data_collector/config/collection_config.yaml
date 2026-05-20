@@ -1,5 +1,5 @@
 dataset:
-  root_dir: "/mnt/c/Users/Autonav/Desktop/morai_dataset"
+  root_dir: "/mnt/z/AIM_2026/대회/2026 대학생 AI SW 자율주행 경진대회/Team A.I.M"
   
 morai:
   host: "10.255.255.254"
@@ -20,7 +20,7 @@ ros:
     gt_objects:         "/Object_topic"
     gt_lanes:           "/morai/gt/lanes"
     traffic_light:      "/GetTrafficLightStatus"
-    ego_state:          "/morai/ego_vehicle_status"
+    ego_state:          "/Ego_topic"
 
 collection:
   default_episodes: 10
