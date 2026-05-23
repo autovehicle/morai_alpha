@@ -1,5 +1,5 @@
 dataset:
-  root_dir: "/mnt/c/Users/Autonav/Desktop/morai_dataset"
+  root_dir: "/mnt/c/Users/tjdus/Desktop/morai_dataset"
   
 morai:
   host: "10.255.255.254"
