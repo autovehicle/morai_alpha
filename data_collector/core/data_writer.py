@@ -444,7 +444,10 @@ class DataWriter:
                        else np.zeros((200, 200, 8), dtype=np.float32),
         }
 
-        np.savez_compressed(str(fname), **save_dict)
+        try:
+            np.savez_compressed(str(fname), **save_dict)
+        except Exception as e:
+            print(f"[DataWriter] .npz 저장 실패: {fname}\n  오류: {e}")
 
     # ── 수집 현황 출력 ──────────────────────────────────────
 
