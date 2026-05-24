@@ -34,7 +34,7 @@ try:
         EgoVehicleStatus,
         ObjectStatusList,
         GPSMessage,
-        TrafficLightStatus,
+        GetTrafficLightStatus,
     )
     ROS_AVAILABLE = True
 except ImportError:
@@ -120,7 +120,7 @@ class ROSManager:
                          self._cb_objects, queue_size=2)
 
         # 신호등
-        rospy.Subscriber(self.topics["traffic_light"], TrafficLightStatus,
+        rospy.Subscriber(self.topics["traffic_light"], GetTrafficLightStatus,
                          self._cb_traffic_light, queue_size=2)
 
         # Ego 상태
@@ -292,7 +292,7 @@ class ROSManager:
         except Exception as e:
             print(f"[ROSManager] GT Objects 콜백 오류: {e}")
 
-    def _cb_traffic_light(self, msg: "TrafficLightStatus"):
+    def _cb_traffic_light(self, msg: "GetTrafficLightStatus"):
         """
         morai_msgs/TrafficLightStatus 기준.
         msg.trafficLightIndex: 신호등 ID
@@ -333,7 +333,7 @@ class ROSManager:
                     z     = msg.position.z,
                     yaw   = heading_rad,
                     speed = speed_mps,
-                    steer = msg.wheel_angle,
+                    steer = getattr(msg, "wheel_angle", 0.0),
                 )
         except Exception as e:
             print(f"[ROSManager] Ego 콜백 오류: {e}")

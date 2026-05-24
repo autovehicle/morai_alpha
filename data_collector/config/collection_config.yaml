@@ -15,12 +15,12 @@ ros:
     camera_front_right: "/morai/camera/front_right/image_raw"
     camera_rear_left:   "/morai/camera/rear_left/image_raw"
     camera_rear_right:  "/morai/camera/rear_right/image_raw"
-    gnss:               "/morai/gnss"
-    imu:                "/morai/imu"
+    gnss:               "/gps"
+    imu:                "/imu"
     gt_objects:         "/Object_topic"
     gt_lanes:           "/morai/gt/lanes"
     traffic_light:      "/GetTrafficLightStatus"
-    ego_state:          "/morai/ego_vehicle_status"
+    ego_state:          "/Ego_topic"
 
 collection:
   default_episodes: 10

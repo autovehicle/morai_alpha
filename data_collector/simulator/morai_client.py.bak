@@ -90,7 +90,15 @@ class MoraiClient:
     def start_episode(self, params):
         """
         EpisodeParams 기준 episode 시작.
-        link 기반 route_links가 있으면 MORAI route/cruise까지 설정한다.
+
+        현재 ScenarioParamGenerator가 만드는 필드:
+        - start_x
+        - start_y
+        - start_yaw
+        - goal_x
+        - goal_y
+        - npc_count
+        - pedestrian_count
         """
         p = self._to_dict(params)
 
@@ -107,98 +115,65 @@ class MoraiClient:
         else:
             self.grpc.restart_world(ego_tf)
 
-        route_links = p.get("route_links", []) or []
-        waypoint_indices = p.get("route_waypoint_indices", {}) or {}
-        decision_range = float(p.get("decision_range_m", 30.0))
+        # goal 좌표가 있으면 목적지 설정 시도
+        goal_x = p.get("goal_x", None)
+        goal_y = p.get("goal_y", None)
 
-        if route_links:
-            print(f"[MoraiClient] setting route_links={len(route_links)}")
-            print(f"[MoraiClient] start_link={p.get('start_link')} end_link={p.get('end_link')}")
-
-            # world restart 후 ego가 완전히 올라올 시간을 조금 준다.
-            import time
-            time.sleep(0.3)
-
+        if goal_x is not None and goal_y is not None:
             try:
-                self.grpc.set_ego_transform(ego_tf)
-            except Exception as e:
-                print(f"[MoraiClient] set_ego_transform warning: {e}")
-
-            route_ok = False
-            try:
-                route_ok = self.grpc.set_ego_route(
-                    route_links,
-                    decision_range=decision_range,
-                    waypoint_indices=waypoint_indices,
+                goal_tf = self.grpc.make_transform(
+                    goal_x,
+                    goal_y,
+                    p.get("goal_z", 0.0),
+                    p.get("goal_yaw", p.get("start_yaw", 0.0)),
                 )
-            except Exception as e:
-                print(f"[MoraiClient] waypoint route failed: {e}")
 
-            if not route_ok:
-                try:
-                    route_ok = self.grpc.set_ego_route(
-                        route_links,
-                        decision_range=decision_range,
-                    )
-                except Exception as e:
-                    print(f"[MoraiClient] plain route failed: {e}")
+                # 함수가 있으면 목적지 설정
+                if hasattr(self.grpc, "set_ego_destination"):
+                    self.grpc.set_ego_destination(goal_tf)
 
-            if route_ok:
-                try:
+                # 크루즈 모드 켜기
+                if hasattr(self.grpc, "set_ego_control_mode_cruise"):
                     self.grpc.set_ego_control_mode_cruise()
-                    self.grpc.set_ego_cruise(
-                        enable=True,
-                        link_speed_ratio=int(p.get("link_speed_ratio", 40)),
-                        constant_velocity=float(p.get("constant_velocity", 20.0)),
-                        cruise_type=p.get("cruise_type", "link"),
-                    )
-                    print("[MoraiClient] route/cruise configured")
-                except Exception as e:
-                    print(f"[MoraiClient] cruise setting failed: {e}")
-            else:
-                print("[MoraiClient] route setup failed; ego may not drive")
 
-        else:
-            print("[MoraiClient] route_links 없음 → start/goal 좌표만 사용")
-            goal_x = p.get("goal_x", None)
-            goal_y = p.get("goal_y", None)
-            if goal_x is not None and goal_y is not None:
-                try:
-                    self.grpc.set_ego_destination(
-                        goal_x,
-                        goal_y,
-                        p.get("goal_z", 0.0),
-                        decision_range=decision_range,
-                    )
-                    self.grpc.set_ego_control_mode_cruise()
+                if hasattr(self.grpc, "set_ego_cruise"):
                     self.grpc.set_ego_cruise()
-                except Exception as e:
-                    print(f"[MoraiClient] goal/cruise 설정 스킵: {e}")
 
+            except Exception as e:
+                print(f"[MoraiClient] goal/cruise 설정 스킵: {e}")
+
+        # 지금 EpisodeParams에는 NPC 좌표가 없고 npc_count만 있음.
+        # 그래서 여기서는 NPC spawn 안 함.
+        # 나중에 ScenarioParamGenerator에서 npcs=[...] 만들면 여기서 spawn 가능.
         self.npc_actors = []
+
         return True
 
     def send_control(self, steer=0.0, throttle=0.0, brake=0.0):
-        # MORAI built-in cruise가 route를 따라가므로 여기서는 제어를 건드리지 않는다.
+        """
+        EpisodeManager 호환용 제어 함수.
+
+        현재 ExpertController가 stub이라 steer/throttle/brake가 모두 0으로 들어온다.
+        그래서 여기서는 MORAI built-in cruise / 현재 주행 상태를 방해하지 않도록 no-op 처리한다.
+        npz 저장 루프를 통과시키기 위한 임시 패치.
+        """
         return True
 
     def setup_episode(self, params, map_name=None):
         """
         EpisodeManager가 호출하는 함수.
-        link 기반 route가 있으면 전체 route_points와 route_links를 반환한다.
+        MORAI episode를 시작하고,
+        EpisodeManager가 기대하는 waypoints, link_ids를 반환한다.
         """
         p = self._to_dict(params)
+
         self.start_episode(p)
 
-        route_points = p.get("route_points", []) or []
-        route_links = p.get("route_links", []) or []
+        waypoints = [
+            [p.get("start_x", 0.0), p.get("start_y", 0.0)],
+            [p.get("goal_x", 0.0), p.get("goal_y", 0.0)],
+        ]
 
-        if route_points:
-            waypoints = [[float(pt[0]), float(pt[1])] for pt in route_points]
-        else:
-            waypoints = [
-                [p.get("start_x", 0.0), p.get("start_y", 0.0)],
-                [p.get("goal_x", 0.0), p.get("goal_y", 0.0)],
-            ]
+        link_ids = []
 
-        return waypoints, route_links
+        return waypoints, link_ids
