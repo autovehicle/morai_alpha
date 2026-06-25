@@ -1,5 +1,5 @@
 dataset:
-  root_dir: "/mnt/c/Users/tjdus/Desktop/morai_dataset"
+  root_dir: "/mnt/z/AIM_2026/대회/2026 대학생 AI SW 자율주행 경진대회/Team A.I.M"
   
 morai:
   host: "10.255.255.254"

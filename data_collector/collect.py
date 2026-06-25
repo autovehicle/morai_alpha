@@ -37,6 +37,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 프로젝트 루트(morai_alpha/)를 Python 경로에 추가
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import yaml
 
 # ── Windows ROS1 환경변수 설정 ────────────────────────────────────────

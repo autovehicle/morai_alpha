@@ -631,6 +631,9 @@ class UrbanBasicDriveScenario(BaseScenario):
                 if hasattr(self.grpc, "stop_ego_cruise"):
                     self.grpc.stop_ego_cruise()
 
+                if callable(getattr(self, "on_lap_end", None)):
+                    self.on_lap_end(lap)
+
                 if max_laps > 0 and lap >= max_laps:
                     print("[UrbanBasicDrive] max_laps reached. finish scenario.")
                     break
@@ -661,6 +664,9 @@ class UrbanBasicDriveScenario(BaseScenario):
                 if hasattr(self.grpc, "stop_ego_cruise"):
                     self.grpc.stop_ego_cruise()
 
+                if callable(getattr(self, "on_lap_end", None)):
+                    self.on_lap_end(lap)
+
                 if max_laps > 0 and lap >= max_laps:
                     print("[UrbanBasicDrive] max_laps reached. finish scenario.")
                     break
@@ -679,6 +685,9 @@ class UrbanBasicDriveScenario(BaseScenario):
                     f"[UrbanBasicDrive] GOAL REACHED "
                     f"lap={lap}, dist={dist_to_goal:.2f}m, elapsed={elapsed:.1f}s"
                 )
+
+                if callable(getattr(self, "on_lap_end", None)):
+                    self.on_lap_end(lap)
 
                 if max_laps > 0 and lap >= max_laps:
                     print("[UrbanBasicDrive] max_laps reached. finish scenario.")
@@ -2397,6 +2406,9 @@ class UrbanSuddenBrakeExpertScenario(UrbanBasicDriveScenario):
                     f"elapsed={elapsed:.1f}s"
                 )
                 self.stop_pure_pursuit_control()
+
+                if callable(getattr(self, "on_lap_end", None)):
+                    self.on_lap_end(lap)
 
                 if max_laps > 0 and lap >= max_laps:
                     print("[UrbanSuddenBrake] max_laps reached. finish scenario.")

@@ -7,6 +7,7 @@ class BaseScenario:
         self.map_loader = map_loader
         self.global_cfg = global_cfg
         self.cfg = scenario_cfg
+        self.on_lap_end = None  # callback(lap_num) — run_collect.py에서 주입
 
     def setup(self):
         raise NotImplementedError

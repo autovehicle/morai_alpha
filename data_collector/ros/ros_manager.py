@@ -266,23 +266,23 @@ class ROSManager:
             for npc in getattr(msg, "npc_list", []):
                 obj_type = "pedestrian" if getattr(npc, "type", 0) == 1 else "vehicle"
                 objects.append(GTObject(
-                    obj_id   = npc.uniqueId,
+                    obj_id   = npc.unique_id,
                     obj_type = obj_type,
-                    x        = npc.pos.x,
-                    y        = npc.pos.y,
-                    z        = npc.pos.z,
-                    vel_x    = getattr(npc, "linear_velocity", {}).x if hasattr(getattr(npc, "linear_velocity", None), "x") else 0.0,
-                    vel_y    = 0.0,
+                    x        = npc.position.x,
+                    y        = npc.position.y,
+                    z        = npc.position.z,
+                    vel_x    = npc.velocity.x,
+                    vel_y    = npc.velocity.y,
                     heading  = getattr(npc, "heading", 0.0),
                 ))
             # 정적 장애물
             for obs in getattr(msg, "obstacle_list", []):
                 objects.append(GTObject(
-                    obj_id   = getattr(obs, "uniqueId", -1),
+                    obj_id   = getattr(obs, "unique_id", -1),
                     obj_type = "static",
-                    x        = obs.pos.x,
-                    y        = obs.pos.y,
-                    z        = obs.pos.z,
+                    x        = obs.position.x,
+                    y        = obs.position.y,
+                    z        = obs.position.z,
                     vel_x    = 0.0,
                     vel_y    = 0.0,
                     heading  = 0.0,
