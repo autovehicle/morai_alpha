@@ -35,6 +35,7 @@ try:
         ObjectStatusList,
         GPSMessage,
         GetTrafficLightStatus,
+        CtrlCmd,
     )
     ROS_AVAILABLE = True
 except ImportError:
@@ -76,6 +77,10 @@ class ROSManager:
 
         # 카메라 최근 타임스탬프 (동기화 기준)
         self._cam_ts: Dict[str, int] = {}
+
+        self._expert_steer    = 0.0
+        self._expert_throttle = 0.0
+        self._expert_brake    = 0.0
 
         self._initialized = False
 
@@ -127,6 +132,14 @@ class ROSManager:
         rospy.Subscriber(self.topics["ego_state"], EgoVehicleStatus,
                          self._cb_ego, queue_size=5)
 
+        # Expert 제어 출력 (GT_BEV가 퍼블리시하는 제어 명령)
+        expert_topic = self.topics.get("expert_ctrl", "/ctrl_cmd")
+        try:
+            rospy.Subscriber(expert_topic, CtrlCmd,
+                             self._cb_expert_ctrl, queue_size=5)
+        except Exception as e:
+            print(f"[ROSManager] expert_ctrl 구독 실패 (topic={expert_topic}): {e}")
+
         self._initialized = True
         print("[ROSManager] 구독 시작 완료")
 
@@ -163,16 +176,19 @@ class ROSManager:
                 imu = None
 
             snap = SensorSnapshot(
-                frame_id     = frame_id,
-                timestamp_ns = ref_ts,
-                cameras      = dict(self._cameras),
-                gnss         = gnss,
-                imu          = imu,
-                ego          = self._ego,
-                gt_objects   = list(self._gt_objects),
-                gt_lanes     = list(self._gt_lanes),
-                tl_states    = list(self._tl_states),
-                is_longtail  = is_longtail,
+                frame_id      = frame_id,
+                timestamp_ns  = ref_ts,
+                cameras       = dict(self._cameras),
+                gnss          = gnss,
+                imu           = imu,
+                ego           = self._ego,
+                gt_objects    = list(self._gt_objects),
+                gt_lanes      = list(self._gt_lanes),
+                tl_states     = list(self._tl_states),
+                is_longtail   = is_longtail,
+                expert_steer    = self._expert_steer,
+                expert_throttle = self._expert_throttle,
+                expert_brake    = self._expert_brake,
             )
         return snap
 
@@ -307,6 +323,15 @@ class ROSManager:
                 )]
         except Exception as e:
             print(f"[ROSManager] 신호등 콜백 오류: {e}")
+
+    def _cb_expert_ctrl(self, msg: "CtrlCmd"):
+        try:
+            with self._lock:
+                self._expert_steer    = float(getattr(msg, "steering",    0.0))
+                self._expert_throttle = float(getattr(msg, "longi_accel", 0.0))
+                self._expert_brake    = float(getattr(msg, "brake",       0.0))
+        except Exception as e:
+            print(f"[ROSManager] expert_ctrl 콜백 오류: {e}")
 
     def _cb_ego(self, msg: "EgoVehicleStatus"):
         """

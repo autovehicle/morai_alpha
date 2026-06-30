@@ -1,9 +1,0 @@
-{
-  "success": false,
-  "reason": "sensor_timeout",
-  "total_frames": 0,
-  "duration_sec": 6.52,
-  "zone": "urban",
-  "scenario": "traffic_jam",
-  "episode_id": 3
-}

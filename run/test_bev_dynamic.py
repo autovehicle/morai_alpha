@@ -26,8 +26,8 @@ import numpy as np
 import cv2 as cv
 
 from network.UDP.udp_manager import UdpManager
-from morai_gym.lib.core.birdiview.map_to_h5 import Config
-from morai_gym.lib.core.birdiview.bev_render import BEVDynamicRenderer
+from IL_BEV.lib.core.birdiview.map_to_h5 import Config
+from IL_BEV.lib.core.birdiview.bev_render import BEVDynamicRenderer
 
 
 def test_lane_rendering():

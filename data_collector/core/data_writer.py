@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import cv2
 import numpy as np
 
 from core.scenario_params import EpisodeParams
@@ -169,53 +170,132 @@ class BEVMapGenerator:
     REAR_M   = 10.0
     SIDE_M   = 20.0
     RES_M    = 0.2     # 픽셀당 m
+    LANE_RANGE_M = 50.0  # 차선 검색 반경
 
-    def __init__(self):
+    def __init__(self, map_dir: str = None):
         self.h = int((self.FRONT_M + self.REAR_M) / self.RES_M)   # 200
         self.w = int((self.SIDE_M * 2) / self.RES_M)              # 200
 
+        # MGeo 차선/정지선 데이터 (map_dir 지정 시 로드)
+        self._lane_data: List[dict] = []      # {points, channel}
+        self._stopline_data: List[dict] = []  # {points}
+        if map_dir:
+            self._load_lane_data(map_dir)
+
+    # ── MGeo 차선 데이터 로드 ─────────────────────────────────
+
+    def _load_lane_data(self, map_dir: str):
+        map_path = Path(map_dir)
+
+        # lane_marking_set.json → 채널 1(황색실선) / 2(실선) / 3(점선)
+        lane_json = map_path / "lane_marking_set.json"
+        if lane_json.exists():
+            with open(lane_json, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            for item in items:
+                pts = np.asarray(item.get("points", []), dtype=np.float32)
+                if pts.ndim != 2 or pts.shape[1] < 2 or pts.shape[0] < 2:
+                    continue
+                if item.get("lane_type") == 530:  # 경계선 제외
+                    continue
+                ch = self._lane_channel(item)
+                self._lane_data.append({"points": pts, "channel": ch})
+            print(f"[BEVMapGenerator] lane_marking_set 로드: {len(self._lane_data)}개")
+        else:
+            print(f"[BEVMapGenerator] WARNING: {lane_json} 없음, 차선 채널 비어있음")
+
+        # stoplane_marking_set.json → 채널 4(정지선)
+        stop_json = map_path / "stoplane_marking_set.json"
+        if stop_json.exists():
+            with open(stop_json, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            for item in items:
+                pts = np.asarray(item.get("points", []), dtype=np.float32)
+                if pts.ndim != 2 or pts.shape[1] < 2 or pts.shape[0] < 2:
+                    continue
+                self._stopline_data.append({"points": pts})
+            print(f"[BEVMapGenerator] stoplane_marking_set 로드: {len(self._stopline_data)}개")
+        else:
+            print(f"[BEVMapGenerator] WARNING: {stop_json} 없음, 정지선 채널 비어있음")
+
+    @staticmethod
+    def _lane_channel(item: dict) -> int:
+        """lane_color + lane_shape → BEV 채널 번호"""
+        color = item.get("lane_color", "").lower()
+        shape_list = item.get("lane_shape", [])
+        shape = shape_list[0].lower() if shape_list else "solid"
+        if "yellow" in color:
+            return 1  # 중앙 황색선
+        if shape in ("broken", "dashed", "dash"):
+            return 3  # 점선
+        return 2      # 실선
+
+    # ── BEV 생성 ─────────────────────────────────────────────
+
     def generate(self, ego: EgoState,
-                 gt_objects: List[GTObject],
-                 gt_lanes: List[GTLane]) -> np.ndarray:
-        """
-        반환: (H, W, 8) float32 배열 (각 채널 0 또는 1)
-        """
+                 gt_objects: List[GTObject]) -> np.ndarray:
+        """반환: (H, W, 8) float32 배열 (각 채널 0 또는 1)"""
         bev = np.zeros((self.h, self.w, 8), dtype=np.float32)
 
-        # 채널 6: 전체 주행 가능 영역 (기본값으로 중앙 영역 fill)
+        # 채널 6: 전체 주행 가능 영역
         bev[:, :, 6] = 1.0
 
-        # 채널 1~4: 차선 그리기
-        for lane in gt_lanes:
-            self._draw_lane(bev, ego, lane)
+        # 채널 1~3: MGeo 차선 마킹
+        for lane in self._lane_data:
+            self._draw_mgeo_polyline(bev, ego, lane["points"], lane["channel"])
+
+        # 채널 4: MGeo 정지선
+        for sl in self._stopline_data:
+            self._draw_mgeo_polyline(bev, ego, sl["points"], channel=4)
 
         # 채널 5: 동적 객체
         for obj in gt_objects:
             if obj.obj_type in ("vehicle", "pedestrian"):
                 self._draw_object(bev, ego, obj)
 
-        # 채널 0: 나머지 background (아무 채널도 없는 픽셀)
+        # 채널 0: background
         occupied = bev[:, :, 1:].sum(axis=2) > 0
         bev[~occupied, 0] = 1.0
 
         return bev
 
-    def _world_to_bev(self, ego: EgoState,
-                      wx: float, wy: float):
-        """월드 좌표 → BEV 픽셀 좌표 (행, 열)"""
+    def _world_to_bev(self, ego: EgoState, wx: float, wy: float):
+        """월드 좌표 1개 → BEV 픽셀 좌표 (행, 열)"""
         dx = wx - ego.x
         dy = wy - ego.y
-
-        # 자차 yaw 기준으로 로컬 변환
         cos_y = np.cos(-ego.yaw)
         sin_y = np.sin(-ego.yaw)
-        local_x =  cos_y * dx - sin_y * dy   # 전방 방향
-        local_y =  sin_y * dx + cos_y * dy   # 좌측 방향
-
-        # 픽셀 인덱스 (전방이 행 0, 후방이 행 h-1)
+        local_x =  cos_y * dx - sin_y * dy
+        local_y =  sin_y * dx + cos_y * dy
         row = int((self.FRONT_M - local_x) / self.RES_M)
         col = int((self.SIDE_M  + local_y) / self.RES_M)
         return row, col
+
+    def _world_pts_to_bev(self, ego: EgoState,
+                          pts: np.ndarray) -> np.ndarray:
+        """월드 좌표 배열 (N, 2+) → cv2용 픽셀 배열 (N, 1, 2) [col, row]"""
+        dx = pts[:, 0] - ego.x
+        dy = pts[:, 1] - ego.y
+        cos_y = np.cos(-ego.yaw)
+        sin_y = np.sin(-ego.yaw)
+        local_x = cos_y * dx - sin_y * dy
+        local_y = sin_y * dx + cos_y * dy
+        rows = (self.FRONT_M - local_x) / self.RES_M
+        cols = (self.SIDE_M  + local_y) / self.RES_M
+        # cv2.polylines 는 (N, 1, 2) int32, 순서는 (x=col, y=row)
+        return np.stack([cols, rows], axis=1).reshape(-1, 1, 2).astype(np.int32)
+
+    def _draw_mgeo_polyline(self, bev: np.ndarray, ego: EgoState,
+                            pts: np.ndarray, channel: int):
+        """MGeo 포인트 배열을 ego 반경 필터 후 BEV 채널에 그린다."""
+        dist = np.sqrt((pts[:, 0] - ego.x) ** 2 + (pts[:, 1] - ego.y) ** 2)
+        pts_near = pts[dist <= self.LANE_RANGE_M]
+        if pts_near.shape[0] < 2:
+            return
+        pts_bev = self._world_pts_to_bev(ego, pts_near)
+        ch_img = (bev[:, :, channel] * 255).astype(np.uint8)
+        cv2.polylines(ch_img, [pts_bev], isClosed=False, color=255, thickness=1)
+        bev[:, :, channel] = ch_img.astype(np.float32) / 255.0
 
     def _draw_lane(self, bev: np.ndarray, ego: EgoState, lane: GTLane):
         lane_type_to_ch = {
@@ -265,7 +345,7 @@ class DataWriter:
 
     def __init__(self, config: dict):
         self.root      = Path(config["dataset"]["root_dir"])
-        self.bev_gen   = BEVMapGenerator()
+        self.bev_gen   = BEVMapGenerator(map_dir=config.get("map_dir"))
 
         self._ep_dir: Optional[Path] = None
         self._frame_dir: Optional[Path] = None
@@ -340,9 +420,7 @@ class DataWriter:
 
         # ── BEV 맵 생성 (ego + GT 정보 필요) ──────────────────
         if snap.ego is not None:
-            snap.bev_map = self.bev_gen.generate(
-                snap.ego, snap.gt_objects, snap.gt_lanes
-            )
+            snap.bev_map = self.bev_gen.generate(snap.ego, snap.gt_objects)
 
         # ── 카메라 이미지 묶기 ─────────────────────────────────
         cameras = {}
@@ -350,29 +428,15 @@ class DataWriter:
             cam = snap.cameras.get(key)
             cameras[key] = cam.image if cam is not None else np.zeros((480, 640, 3), dtype=np.uint8)
 
-        # ── GT 객체 배열 변환 (타입별 분리) ───────────────────────
-        # gt_vehicles    : (N, 6)  [id, x, y, z, vel_x, vel_y]
-        # gt_pedestrians : (M, 6)  [id, x, y, z, vel_x, vel_y]
-        # gt_static      : (K, 4)  [id, x, y, z]  <- 속도 없음
+        # ── GT 객체 배열 변환 (N, 7) ──────────────────────────────
+        # [id, type_id, x, y, z, vel_x, vel_y]
+        # type_id: 0=vehicle, 1=pedestrian, 2=static
+        _TYPE_ID = {"vehicle": 0, "pedestrian": 1, "static": 2}
 
-        vehicles    = [o for o in snap.gt_objects if o.obj_type == "vehicle"]
-        pedestrians = [o for o in snap.gt_objects if o.obj_type == "pedestrian"]
-        statics     = [o for o in snap.gt_objects if o.obj_type == "static"]
-
-        gt_vehicles = np.array([
-            [o.obj_id, o.x, o.y, o.z, o.vel_x, o.vel_y]
-            for o in vehicles
-        ], dtype=np.float32) if vehicles else np.zeros((0, 6), dtype=np.float32)
-
-        gt_pedestrians = np.array([
-            [o.obj_id, o.x, o.y, o.z, o.vel_x, o.vel_y]
-            for o in pedestrians
-        ], dtype=np.float32) if pedestrians else np.zeros((0, 6), dtype=np.float32)
-
-        gt_static = np.array([
-            [o.obj_id, o.x, o.y, o.z]
-            for o in statics
-        ], dtype=np.float32) if statics else np.zeros((0, 4), dtype=np.float32)
+        gt_objects_arr = np.array([
+            [o.obj_id, _TYPE_ID.get(o.obj_type, 2), o.x, o.y, o.z, o.vel_x, o.vel_y]
+            for o in snap.gt_objects
+        ], dtype=np.float32) if snap.gt_objects else np.zeros((0, 7), dtype=np.float32)
 
         # ── 신호등 상태 배열 ───────────────────────────────────
         # shape: (M, 2)  [tl_id_hash, state]
@@ -431,9 +495,7 @@ class DataWriter:
             "gnss":    gnss_arr,
             "imu":     imu_arr,
             # GT
-            "gt_vehicles":     gt_vehicles,
-            "gt_pedestrians":  gt_pedestrians,
-            "gt_static":       gt_static,
+            "gt_objects": gt_objects_arr,
             "tl_states":   tl_arr,
             # 경로
             "nav_waypoints": nav_wp,

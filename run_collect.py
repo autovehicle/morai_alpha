@@ -21,6 +21,17 @@ sys.path.insert(0, str(ROOT / "data_collector"))
 sys.path.insert(0, str(ROOT / "scenario_runner"))
 
 
+def _nav_waypoints(route_points, ego, n_ahead: int = 50):
+    """현재 ego 위치에서 가장 가까운 경로 포인트부터 n_ahead개 반환."""
+    import numpy as np
+    if not route_points or ego is None:
+        return np.zeros((0, 2), dtype=np.float32)
+    pts = np.array([[p[0], p[1]] for p in route_points], dtype=np.float32)
+    ego_xy = np.array([ego.x, ego.y], dtype=np.float32)
+    closest = int(np.argmin(np.linalg.norm(pts - ego_xy, axis=1)))
+    return pts[closest: closest + n_ahead]
+
+
 def _deep_update(base: dict, override: dict) -> dict:
     for k, v in override.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
@@ -66,6 +77,8 @@ def main():
     from data_collector.ros.ros_manager import ROSManager
     from data_collector.core.data_writer import DataWriter
     from data_collector.core.scenario_params import ScenarioParamGenerator
+
+    coll_cfg["map_dir"] = str(ROOT / "morai_gym" / "lib" / "core" / "birdiview" / "map")
 
     print("[run_collect] ROS 구독 시작...")
     ros_mgr = ROSManager(coll_cfg)
@@ -179,8 +192,9 @@ def main():
                 if snap and snap.ego:
                     now = time.time()
                     if now - last_save >= save_period:
-                        frame_id      += 1
-                        snap.frame_id  = frame_id
+                        frame_id           += 1
+                        snap.frame_id       = frame_id
+                        snap.nav_waypoints  = _nav_waypoints(params.route_points, snap.ego)
                         writer.write_frame(snap)
                         last_save = now
                 time.sleep(0.01)
