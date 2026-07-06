@@ -42,10 +42,9 @@ D:/morai_dataset/
 |---|---|---|---|
 | `timestamp_ns` | (1,) | int64 | 타임스탬프 |
 | `cam_front` | (H, W, 3) | uint8 | 전방 카메라 RGB |
-| `cam_front_left` | (H, W, 3) | uint8 | 전방 좌측 |
-| `cam_front_right` | (H, W, 3) | uint8 | 전방 우측 |
-| `cam_rear_left` | (H, W, 3) | uint8 | 후방 좌측 |
-| `cam_rear_right` | (H, W, 3) | uint8 | 후방 우측 |
+| `cam_left` | (H, W, 3) | uint8 | 좌측 카메라 RGB |
+| `cam_right` | (H, W, 3) | uint8 | 우측 카메라 RGB |
+| `cam_back` | (H, W, 3) | uint8 | 후방 카메라 RGB |
 | `ego` | (6,) | float32 | x, y, z, yaw, speed, steer |
 | `gnss` | (6,) | float32 | lat, lon, alt, vel_x, vel_y, vel_z |
 | `imu` | (6,) | float32 | accel xyz, gyro xyz |

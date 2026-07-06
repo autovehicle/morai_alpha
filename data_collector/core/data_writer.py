@@ -259,6 +259,43 @@ class BEVMapGenerator:
 
         return bev
 
+    def get_nearby_lane_geometry(self, ego: EgoState, radius: float = None):
+        """
+        ego 주변 차선/정지선 원본 좌표(월드 좌표계)를 벡터 형태로 반환.
+        각 폴리라인의 점마다 한 행씩 뽑아서 (M, 4)/(K, 3) 고정 shape 배열로 만든다
+        (npz는 ragged 배열을 그대로 저장할 수 없어서 flat 표현 사용).
+
+        반환:
+            lane_geometry:     (M, 4) float32  [lane_idx, channel, x, y]
+            stopline_geometry: (K, 3) float32  [stopline_idx, x, y]
+        """
+        radius = radius if radius is not None else self.LANE_RANGE_M
+
+        lane_rows = []
+        for idx, lane in enumerate(self._lane_data):
+            pts = lane["points"]
+            dist = np.sqrt((pts[:, 0] - ego.x) ** 2 + (pts[:, 1] - ego.y) ** 2)
+            near = pts[dist <= radius]
+            if near.shape[0] < 2:
+                continue
+            ch = lane["channel"]
+            for x, y in near[:, :2]:
+                lane_rows.append((idx, ch, x, y))
+
+        stop_rows = []
+        for idx, sl in enumerate(self._stopline_data):
+            pts = sl["points"]
+            dist = np.sqrt((pts[:, 0] - ego.x) ** 2 + (pts[:, 1] - ego.y) ** 2)
+            near = pts[dist <= radius]
+            if near.shape[0] < 2:
+                continue
+            for x, y in near[:, :2]:
+                stop_rows.append((idx, x, y))
+
+        lane_geometry = np.array(lane_rows, dtype=np.float32) if lane_rows else np.zeros((0, 4), dtype=np.float32)
+        stopline_geometry = np.array(stop_rows, dtype=np.float32) if stop_rows else np.zeros((0, 3), dtype=np.float32)
+        return lane_geometry, stopline_geometry
+
     def _world_to_bev(self, ego: EgoState, wx: float, wy: float):
         """월드 좌표 1개 → BEV 픽셀 좌표 (행, 열)"""
         dx = wx - ego.x
@@ -341,7 +378,7 @@ class DataWriter:
         summary = writer.end_episode(success=True, reason="goal_reached")
     """
 
-    CAMERA_KEYS = ["front", "front_left", "front_right", "rear_left", "rear_right"]
+    CAMERA_KEYS = ["front", "left", "right", "back"]
 
     def __init__(self, config: dict):
         self.root      = Path(config["dataset"]["root_dir"])
@@ -363,7 +400,11 @@ class DataWriter:
         zone_str = f"zone_{params.zone}"
         scen_str = f"scenario_{params.scenario}"
 
-        self._ep_dir    = self.root / zone_str / scen_str / ep_str
+        scen_dir = self.root / zone_str / scen_str
+        if params.run_id:
+            scen_dir = scen_dir / f"scenario_run_{params.run_id:03d}"
+
+        self._ep_dir    = scen_dir / ep_str
         self._frame_dir = self._ep_dir / "frames"
         self._frame_dir.mkdir(parents=True, exist_ok=True)
 
@@ -421,6 +462,10 @@ class DataWriter:
         # ── BEV 맵 생성 (ego + GT 정보 필요) ──────────────────
         if snap.ego is not None:
             snap.bev_map = self.bev_gen.generate(snap.ego, snap.gt_objects)
+            lane_geometry, stopline_geometry = self.bev_gen.get_nearby_lane_geometry(snap.ego)
+        else:
+            lane_geometry = np.zeros((0, 4), dtype=np.float32)
+            stopline_geometry = np.zeros((0, 3), dtype=np.float32)
 
         # ── 카메라 이미지 묶기 ─────────────────────────────────
         cameras = {}
@@ -468,9 +513,11 @@ class DataWriter:
             imu.gyro_x,  imu.gyro_y,  imu.gyro_z
         ], dtype=np.float32) if imu else np.zeros(6, dtype=np.float32)
 
-        # ── nav waypoints ──────────────────────────────────────
+        # ── nav waypoints / 도로 링크 ID ────────────────────────
         nav_wp = snap.nav_waypoints if snap.nav_waypoints is not None \
                  else np.zeros((0, 2), dtype=np.float32)
+        nav_link_ids_arr = np.array(snap.nav_link_ids, dtype="<U32") if snap.nav_link_ids \
+                            else np.zeros((0,), dtype="<U32")
 
         # ── expert 제어 ────────────────────────────────────────
         expert_arr = np.array([
@@ -485,11 +532,10 @@ class DataWriter:
             "frame_id":       np.array([snap.frame_id],     dtype=np.int32),
             "is_longtail":    np.array([snap.is_longtail],  dtype=bool),
             # 카메라
-            "cam_front":        cameras["front"],
-            "cam_front_left":   cameras["front_left"],
-            "cam_front_right":  cameras["front_right"],
-            "cam_rear_left":    cameras["rear_left"],
-            "cam_rear_right":   cameras["rear_right"],
+            "cam_front": cameras["front"],
+            "cam_left":  cameras["left"],
+            "cam_right": cameras["right"],
+            "cam_back":  cameras["back"],
             # 센서
             "ego":     ego_arr,
             "gnss":    gnss_arr,
@@ -499,6 +545,10 @@ class DataWriter:
             "tl_states":   tl_arr,
             # 경로
             "nav_waypoints": nav_wp,
+            "nav_link_ids":  nav_link_ids_arr,
+            # 차선/정지선 원본 지오메트리 (world 좌표, ego 반경 필터)
+            "gt_lane_geometry":     lane_geometry,      # (M,4): [lane_idx, channel, x, y]
+            "gt_stopline_geometry": stopline_geometry,  # (K,3): [stopline_idx, x, y]
             # expert 제어
             "expert": expert_arr,
             # BEV
@@ -506,7 +556,12 @@ class DataWriter:
                        else np.zeros((200, 200, 8), dtype=np.float32),
         }
 
-        np.savez_compressed(str(fname), **save_dict)
+        # 저장 도중 프로세스가 죽어도 fname 자체는 손상되지 않도록 임시 파일에 먼저 쓰고 원자적으로 교체
+        # (파일 객체로 넘겨야 numpy가 파일명에 .npz를 추가로 덧붙이지 않음)
+        tmp_fname = fname.with_suffix(".npz.tmp")
+        with open(tmp_fname, "wb") as fh:
+            np.savez_compressed(fh, **save_dict)
+        os.replace(tmp_fname, fname)
 
     # ── 수집 현황 출력 ──────────────────────────────────────
 

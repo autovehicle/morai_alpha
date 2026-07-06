@@ -1,15 +1,15 @@
 """
 expert/expert_controller.py
 ----------------------------
-Rule-based Expert Controller — stub 상태.
+GT_BEV Expert Controller.
 
-실제 expert 로직은 추후 구현 예정.
-현재는 step()이 항상 [0.0, 0.0, 0.0] 을 반환하며,
-.npz 저장 시 expert 필드는 빈 값(0)으로 기록됨.
+GT_BEV 프로세스가 /ctrl_cmd 토픽에 퍼블리시한 CtrlCmd 메시지를
+ROSManager가 구독하여 버퍼에 저장한다.
+ExpertController.step()은 그 버퍼에서 최신 값을 읽어 반환한다.
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -23,19 +23,24 @@ class ControlOutput:
 
 class ExpertController:
 
-    def __init__(self, config: dict = None):
-        pass
+    def __init__(self, config: dict = None, ros_manager=None):
+        self._ros = ros_manager
 
     def reset(self, waypoints: np.ndarray):
-        # TODO: expert 구현 시 경로 초기화 로직 추가
         pass
 
     def step(self, ego, tl_states: List, dt: float = 0.1) -> ControlOutput:
-        # TODO: rule-based expert 구현
+        """GT_BEV가 /ctrl_cmd 로 퍼블리시한 최신 제어값을 반환."""
+        if self._ros is not None:
+            with self._ros._lock:
+                return ControlOutput(
+                    steer    = self._ros._expert_steer,
+                    throttle = self._ros._expert_throttle,
+                    brake    = self._ros._expert_brake,
+                )
         return ControlOutput(steer=0.0, throttle=0.0, brake=0.0)
 
     @staticmethod
     def detect_longtail(ego, prev_speed: float, dt: float,
                         tl_states: List, triggers: List[str]) -> bool:
-        # TODO: longtail 감지 로직 구현
         return False

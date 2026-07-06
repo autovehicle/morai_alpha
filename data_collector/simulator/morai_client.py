@@ -1,22 +1,20 @@
 import sys
 from pathlib import Path
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scenario_runner_external import (
+    apply_collection_morai_overrides,
+    ensure_scenario_runner_on_path,
+    load_global_cfg,
+)
+
+ensure_scenario_runner_on_path()
+
 from scenario_runner.utils.grpc_client import MoraiGrpcClient
-
-
-def deep_update(base, override):
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            deep_update(base[key], value)
-        else:
-            base[key] = value
-    return base
 
 
 class MoraiClient:
@@ -30,34 +28,7 @@ class MoraiClient:
         self.npc_actors = []
 
     def _load_grpc_config(self):
-        root_dir = Path(__file__).resolve().parents[2]
-        config_dir = root_dir / "scenario_runner" / "config"
-
-        global_path = config_dir / "global.yaml"
-        local_path = config_dir / "local.yaml"
-
-        with open(global_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-
-        if local_path.exists():
-            with open(local_path, "r", encoding="utf-8") as f:
-                local_cfg = yaml.safe_load(f) or {}
-            cfg = deep_update(cfg, local_cfg)
-
-        # 상대경로를 morai_alpha 루트 기준 절대경로로 변환
-        paths = cfg.setdefault("paths", {})
-
-        if "grpc_src" in paths:
-            grpc_src = Path(paths["grpc_src"])
-            if not grpc_src.is_absolute():
-                paths["grpc_src"] = str(root_dir / grpc_src)
-
-        if "mgeo_root" in paths:
-            mgeo_root = Path(paths["mgeo_root"])
-            if not mgeo_root.is_absolute():
-                paths["mgeo_root"] = str(root_dir / mgeo_root)
-
-        return cfg
+        return apply_collection_morai_overrides(load_global_cfg(), self.config)
 
     def connect(self):
         try:

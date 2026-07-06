@@ -56,7 +56,7 @@ class ROSManager:
     타임스탬프 기준으로 동기화해 SensorSnapshot으로 반환.
     """
 
-    CAMERA_KEYS = ["front", "front_left", "front_right", "rear_left", "rear_right"]
+    CAMERA_KEYS = ["front", "left", "right", "back"]
     SYNC_WINDOW_NS = 20 * 1_000_000   # 20ms → ns
 
     def __init__(self, config: dict):
@@ -94,13 +94,12 @@ class ROSManager:
 
         rospy.init_node(node_name, anonymous=True, disable_signals=True)
 
-        # 카메라 5개 구독
+        # 카메라 4개 구독
         cam_topic_keys = {
-            "front":       "camera_front",
-            "front_left":  "camera_front_left",
-            "front_right": "camera_front_right",
-            "rear_left":   "camera_rear_left",
-            "rear_right":  "camera_rear_right",
+            "front": "camera_front",
+            "left":  "camera_left",
+            "right": "camera_right",
+            "back":  "camera_back",
         }
         for key, topic_key in cam_topic_keys.items():
             topic = self.topics[topic_key]
@@ -272,24 +271,36 @@ class ROSManager:
     def _cb_objects(self, msg: "ObjectStatusList"):
         """
         morai_msgs/ObjectStatusList 기준.
-        msg.npc_list: NPCStatus[] (차량/보행자)
-        msg.obstacle_list: ObstacleStatus[] (정적 장애물)
-        실제 필드명은 morai_msgs 패키지 확인 필요.
+        msg.npc_list: ObjectStatus[] (차량)
+        msg.pedestrian_list: ObjectStatus[] (보행자)
+        msg.obstacle_list: ObjectStatus[] (정적 장애물)
+        각 리스트가 이미 종류별로 분리돼서 오므로, 리스트 소속으로 분류한다.
         """
         try:
             objects = []
-            # NPC (차량, 보행자)
+            # NPC 차량
             for npc in getattr(msg, "npc_list", []):
-                obj_type = "pedestrian" if getattr(npc, "type", 0) == 1 else "vehicle"
                 objects.append(GTObject(
                     obj_id   = npc.unique_id,
-                    obj_type = obj_type,
+                    obj_type = "vehicle",
                     x        = npc.position.x,
                     y        = npc.position.y,
                     z        = npc.position.z,
                     vel_x    = npc.velocity.x,
                     vel_y    = npc.velocity.y,
                     heading  = getattr(npc, "heading", 0.0),
+                ))
+            # 보행자
+            for ped in getattr(msg, "pedestrian_list", []):
+                objects.append(GTObject(
+                    obj_id   = ped.unique_id,
+                    obj_type = "pedestrian",
+                    x        = ped.position.x,
+                    y        = ped.position.y,
+                    z        = ped.position.z,
+                    vel_x    = ped.velocity.x,
+                    vel_y    = ped.velocity.y,
+                    heading  = getattr(ped, "heading", 0.0),
                 ))
             # 정적 장애물
             for obs in getattr(msg, "obstacle_list", []):
@@ -327,8 +338,8 @@ class ROSManager:
     def _cb_expert_ctrl(self, msg: "CtrlCmd"):
         try:
             with self._lock:
-                self._expert_steer    = float(getattr(msg, "steering",    0.0))
-                self._expert_throttle = float(getattr(msg, "longi_accel", 0.0))
+                self._expert_steer    = float(getattr(msg, "steering", 0.0))
+                self._expert_throttle = float(getattr(msg, "accel",       0.0))
                 self._expert_brake    = float(getattr(msg, "brake",       0.0))
         except Exception as e:
             print(f"[ROSManager] expert_ctrl 콜백 오류: {e}")

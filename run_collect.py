@@ -12,13 +12,22 @@ import argparse
 import sys
 import threading
 import time
-import yaml
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "data_collector"))
-sys.path.insert(0, str(ROOT / "scenario_runner"))
+
+from scenario_runner_external import (
+    apply_collection_morai_overrides,
+    create_scenario,
+    ensure_scenario_runner_on_path,
+    load_global_cfg,
+    load_yaml,
+    load_zone_cfg,
+)
+
+ensure_scenario_runner_on_path()
 
 
 def _nav_waypoints(route_points, ego, n_ahead: int = 50):
@@ -32,33 +41,6 @@ def _nav_waypoints(route_points, ego, n_ahead: int = 50):
     return pts[closest: closest + n_ahead]
 
 
-def _deep_update(base: dict, override: dict) -> dict:
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_update(base[k], v)
-        else:
-            base[k] = v
-    return base
-
-
-def _load_yaml(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def _load_global_cfg() -> dict:
-    cfg = _load_yaml(ROOT / "scenario_runner/config/global.yaml")
-    local = ROOT / "scenario_runner/config/local.yaml"
-    if local.exists():
-        _deep_update(cfg, _load_yaml(local))
-
-    for key, val in cfg.get("paths", {}).items():
-        if isinstance(val, str) and not Path(val).is_absolute():
-            cfg["paths"][key] = str(ROOT / val)
-
-    return cfg
-
-
 def main():
     parser = argparse.ArgumentParser(description="시나리오 실행 + 데이터 수집 통합")
     parser.add_argument("--zone",     default="urban")
@@ -66,9 +48,9 @@ def main():
     args = parser.parse_args()
 
     # ── 설정 로드 ──────────────────────────────────────────────
-    coll_cfg   = _load_yaml(ROOT / "data_collector/config/collection_config.yaml")
-    global_cfg = _load_global_cfg()
-    zone_cfg   = _load_yaml(ROOT / f"scenario_runner/config/{args.zone}.yaml")
+    coll_cfg   = load_yaml(ROOT / "data_collector/config/collection_config.yaml")
+    global_cfg = apply_collection_morai_overrides(load_global_cfg(), coll_cfg)
+    zone_cfg   = load_zone_cfg(args.zone)
     scenario_cfg = zone_cfg["scenarios"][args.scenario]
 
     # ── 컴포넌트 초기화 ────────────────────────────────────────
@@ -78,7 +60,7 @@ def main():
     from data_collector.core.data_writer import DataWriter
     from data_collector.core.scenario_params import ScenarioParamGenerator
 
-    coll_cfg["map_dir"] = str(ROOT / "morai_gym" / "lib" / "core" / "birdiview" / "map")
+    coll_cfg["map_dir"] = global_cfg["paths"]["mgeo_root"]
 
     print("[run_collect] ROS 구독 시작...")
     ros_mgr = ROSManager(coll_cfg)
@@ -93,24 +75,14 @@ def main():
     param_gen  = ScenarioParamGenerator(coll_cfg)
 
     # ── 시나리오 생성 ──────────────────────────────────────────
-    if args.zone == "urban" and args.scenario == "sudden_brake":
-        from scenario_runner.zones.urban_scenarios import UrbanSuddenBrakeExpertScenario
-        scenario = UrbanSuddenBrakeExpertScenario(
-            grpc_client  = grpc_client,
-            map_loader   = map_loader,
-            global_cfg   = global_cfg,
-            scenario_cfg = scenario_cfg,
-        )
-    elif args.zone == "urban" and args.scenario == "basic_drive":
-        from scenario_runner.zones.urban_scenarios import UrbanBasicDriveScenario
-        scenario = UrbanBasicDriveScenario(
-            grpc_client  = grpc_client,
-            map_loader   = map_loader,
-            global_cfg   = global_cfg,
-            scenario_cfg = scenario_cfg,
-        )
-    else:
-        raise ValueError(f"지원하지 않는 시나리오: {args.zone}/{args.scenario}")
+    scenario = create_scenario(
+        zone=args.zone,
+        scenario=args.scenario,
+        grpc_client=grpc_client,
+        map_loader=map_loader,
+        global_cfg=global_cfg,
+        scenario_cfg=scenario_cfg,
+    )
 
     # ── 에피소드 전환 이벤트 ───────────────────────────────────
     lap_end_event = threading.Event()
@@ -149,25 +121,25 @@ def main():
     save_period   = 1.0 / SAVE_HZ
     episode_id    = 0
 
-    # 기존 episode 폴더 확인 후 이어서 번호 매기기
-    from pathlib import Path as _Path
+    # 기존 scenario_run 폴더 확인 후 새 run 번호 부여 (이번 실행 = 새 scenario_run)
     import re as _re
     zone_str = f"zone_{args.zone}"
     scen_str = f"scenario_{args.scenario}"
-    ep_root  = _Path(coll_cfg["dataset"]["root_dir"]) / zone_str / scen_str
-    existing = [
+    scen_root = Path(coll_cfg["dataset"]["root_dir"]) / zone_str / scen_str
+    existing_runs = [
         int(m.group(1))
-        for d in (ep_root.glob("episode_*") if ep_root.exists() else [])
-        if (m := _re.match(r"episode_(\d+)", d.name))
+        for d in (scen_root.glob("scenario_run_*") if scen_root.exists() else [])
+        if (m := _re.match(r"scenario_run_(\d+)", d.name))
     ]
-    episode_id = max(existing, default=0)
-    print(f"[run_collect] 기존 episode {episode_id}개 확인 → episode_{episode_id+1:03d}부터 시작")
+    run_id = max(existing_runs, default=0) + 1
+    print(f"[run_collect] scenario_run_{run_id:03d} 시작")
     print(f"[run_collect] 수집 시작 (zone={args.zone}, scenario={args.scenario}, {SAVE_HZ}Hz)")
 
     try:
         while not done_event.is_set():
             episode_id += 1
             params  = param_gen.generate(args.zone, args.scenario, episode_id)
+            params.run_id = run_id
             ep_dir  = writer.begin_episode(params)
             print(f"\n[run_collect] Episode {episode_id:03d} 시작 → {ep_dir}")
 
@@ -194,7 +166,8 @@ def main():
                     if now - last_save >= save_period:
                         frame_id           += 1
                         snap.frame_id       = frame_id
-                        snap.nav_waypoints  = _nav_waypoints(params.route_points, snap.ego)
+                        snap.nav_waypoints  = _nav_waypoints(scenario.route_points, snap.ego)
+                        snap.nav_link_ids   = scenario.route_links
                         writer.write_frame(snap)
                         last_save = now
                 time.sleep(0.01)
@@ -207,6 +180,10 @@ def main():
     except KeyboardInterrupt:
         print("\n[run_collect] 중단됨 (Ctrl+C)")
     finally:
+        try:
+            scenario.cleanup()
+        except Exception as e:
+            print(f"[run_collect] scenario cleanup 오류: {e}")
         grpc_client.stop()
         ros_mgr.stop()
         writer.print_summary()

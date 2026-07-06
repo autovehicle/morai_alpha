@@ -2,25 +2,25 @@ dataset:
   root_dir: "/mnt/z/AIM_2026/대회/2026 대학생 AI SW 자율주행 경진대회/Team A.I.M"
   
 morai:
-  host: "10.255.255.254"
-  grpc_port: 50051
-  ego_vehicle: "Hyundai_IONIQ5"
+  host: "172.24.176.1"  # WSL에서 Windows 호스트(MORAI gRPC) 접속용 IP, 127.0.0.1 아님
+  grpc_port: 7789
+  ego_vehicle: "2023_Hyundai_Ioniq5"
 
 ros:
   setup_bat: ""
   master_uri: "http://172.24.181.244:11311"
   topics:
-    camera_front:       "/morai/camera/front/image_raw"
-    camera_front_left:  "/morai/camera/front_left/image_raw"
-    camera_front_right: "/morai/camera/front_right/image_raw"
-    camera_rear_left:   "/morai/camera/rear_left/image_raw"
-    camera_rear_right:  "/morai/camera/rear_right/image_raw"
+    camera_front: "/front"
+    camera_left:  "/left"
+    camera_right: "/right"
+    camera_back:  "/back"
     gnss:               "/gps"
     imu:                "/imu"
     gt_objects:         "/Object_topic"
     gt_lanes:           "/morai/gt/lanes"
     traffic_light:      "/GetTrafficLightStatus"
     ego_state:          "/Ego_topic"
+    expert_ctrl:        "/ctrl_cmd_0"
 
 collection:
   default_episodes: 10

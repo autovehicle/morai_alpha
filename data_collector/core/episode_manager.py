@@ -119,10 +119,9 @@ class EpisodeManager:
             snap.expert_throttle = output.throttle
             snap.expert_brake    = output.brake
 
-            # ── 5-3. 시뮬레이터에 제어 전송 ─────────────────────
-            self.client.send_control(
-                output.steer, output.throttle, output.brake
-            )
+            # ── 5-3. 시뮬레이터 제어 전송 생략 ──────────────────────
+            # GT_BEV가 /ctrl_cmd 를 직접 시뮬레이터에 퍼블리시하므로
+            # 여기서 send_control()을 호출하면 이중 전송이 발생한다.
 
             # ── 5-4. longtail 실시간 감지 ────────────────────────
             is_longtail_frame = ExpertController.detect_longtail(

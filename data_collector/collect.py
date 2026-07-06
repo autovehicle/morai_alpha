@@ -196,7 +196,7 @@ def main():
         ros_mgr.stop()
         sys.exit(1)
 
-    expert    = ExpertController(config)
+    expert    = ExpertController(config, ros_manager=ros_mgr)
     writer    = DataWriter(config)
     generator = ScenarioParamGenerator(config)
     manager   = EpisodeManager(ros_mgr, client, expert, writer, config)

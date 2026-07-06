@@ -5,6 +5,15 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any
 import yaml
 
+from scenario_runner_external import (
+    RUNNER_CONFIG_DIR,
+    RUNNER_ROOT,
+    ensure_scenario_runner_on_path,
+    load_global_cfg,
+)
+
+ensure_scenario_runner_on_path()
+
 from scenario_runner.utils.map_loader import MGeoMapLoader
 from scenario_runner.utils.route_utils import build_route_between
 from scenario_runner.utils.transform_utils import (
@@ -54,11 +63,14 @@ class EpisodeParams:
     link_speed_ratio: int = 40
     constant_velocity: float = 20.0
 
+    run_id: int = 0
+
     def to_dict(self) -> dict:
         return {
             "zone": self.zone,
             "scenario": self.scenario,
             "episode_id": self.episode_id,
+            "run_id": self.run_id,
             "start_x": self.start_x,
             "start_y": self.start_y,
             "start_z": self.start_z,
@@ -101,7 +113,7 @@ class ScenarioParamGenerator:
 
     def __init__(self, config: dict):
         self.config = config
-        self.root_dir = Path(__file__).resolve().parents[2]
+        self.runner_root = RUNNER_ROOT
         self.rng = random.Random()
 
     def _load_yaml(self, path: Path) -> dict:
@@ -109,24 +121,10 @@ class ScenarioParamGenerator:
             return yaml.safe_load(f) or {}
 
     def _load_global_cfg(self) -> dict:
-        config_dir = self.root_dir / "scenario_runner" / "config"
-        global_cfg = self._load_yaml(config_dir / "global.yaml")
-        local_path = config_dir / "local.yaml"
-        if local_path.exists():
-            local_cfg = self._load_yaml(local_path)
-            deep_update(global_cfg, local_cfg)
-
-        paths = global_cfg.setdefault("paths", {})
-        for key in ("mgeo_root", "grpc_src"):
-            if key in paths:
-                p = Path(paths[key])
-                if not p.is_absolute():
-                    paths[key] = str(self.root_dir / p)
-
-        return global_cfg
+        return load_global_cfg()
 
     def _load_runner_scenario_cfg(self, zone: str, scenario: str):
-        zone_path = self.root_dir / "scenario_runner" / "config" / f"{zone}.yaml"
+        zone_path = RUNNER_CONFIG_DIR / f"{zone}.yaml"
         if not zone_path.exists():
             return None
 
@@ -144,7 +142,7 @@ class ScenarioParamGenerator:
 
         path = Path(zone_links_path)
         if not path.is_absolute():
-            path = self.root_dir / path
+            path = self.runner_root / path
 
         data = self._load_yaml(path)
         zone_data = data.get(zone, {})
