@@ -1,3 +1,4 @@
 [submodule "third_party/morai_scenario_runner"]
 	path = third_party/morai_scenario_runner
 	url = https://github.com/chlwodnjs33/morai_scenario_runner.git
+	branch = main
