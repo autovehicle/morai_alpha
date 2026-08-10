@@ -11,7 +11,6 @@ lap이 끝날 때마다 자동으로 새 episode 폴더를 생성하고 데이�
 import argparse
 import sys
 import threading
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -41,10 +40,29 @@ def _nav_waypoints(route_points, ego, n_ahead: int = 50):
     return pts[closest: closest + n_ahead]
 
 
+# 0:background 1:center_yellow 2:solid 3:dashed 4:stopline 5:dynamic 6:drivable 7:crosswalk
+_BEV_COLORS_BGR = {
+    6: (60, 60, 60), 0: (30, 30, 30), 1: (0, 215, 255), 2: (255, 255, 255),
+    3: (255, 220, 120), 4: (60, 60, 255), 7: (255, 120, 200), 5: (0, 140, 255),
+}
+_BEV_DRAW_ORDER = [6, 0, 1, 2, 3, 4, 7, 5]
+
+
+def _bev_to_bgr(bev_map):
+    """bev_map(H,W,8) → cv2 표시용 BGR 컬러 이미지."""
+    import numpy as np
+    rgb = np.zeros((*bev_map.shape[:2], 3), dtype="uint8")
+    for ch in _BEV_DRAW_ORDER:
+        rgb[bev_map[:, :, ch] > 0.5] = _BEV_COLORS_BGR[ch]
+    return rgb
+
+
 def main():
     parser = argparse.ArgumentParser(description="시나리오 실행 + 데이터 수집 통합")
     parser.add_argument("--zone",     default="urban")
     parser.add_argument("--scenario", default="sudden_brake")
+    parser.add_argument("--show-bev", action="store_true",
+                         help="수집 중인 BEV맵을 실시간 cv2 창으로 표시")
     args = parser.parse_args()
 
     # ── 설정 로드 ──────────────────────────────────────────────
@@ -117,8 +135,9 @@ def main():
     setup_done_event.wait()
 
     # ── 데이터 수집 메인 루프 ──────────────────────────────────
+    # 저장 Hz는 이제 wall-clock이 아니라 gRPC sync_mode.tick_period(grpc_client.py)로 결정된다.
+    # tick_period=100ms(=10Hz)로 설정돼 있으면 매 tick마다 저장 = 10Hz.
     SAVE_HZ       = coll_cfg.get("collection", {}).get("longtail_hz", 10)
-    save_period   = 1.0 / SAVE_HZ
     episode_id    = 0
 
     # 기존 scenario_run 폴더 확인 후 새 run 번호 부여 (이번 실행 = 새 scenario_run)
@@ -145,7 +164,6 @@ def main():
 
             lap_end_event.clear()
             frame_id  = 0
-            last_save = 0.0
 
             # 첫 센서 데이터 대기
             waited = False
@@ -159,18 +177,29 @@ def main():
                 continue
 
             # 수집 루프 (lap 끝나거나 시나리오 종료까지)
+            # gRPC Synchronous Mode: tick()을 명시적으로 호출해야 시뮬레이터가 진행됨.
+            # wall-clock(time.time()) 대신 tick 리턴값(SyncTimestamp)을 프레임에 그대로 붙인다.
             while not lap_end_event.is_set() and not done_event.is_set():
-                snap = ros_mgr.get_snapshot(frame_id, params.is_longtail)
+                sync_ts = grpc_client.world.tick(1)
+                if not sync_ts:
+                    continue
+
+                snap = ros_mgr.get_snapshot(
+                    frame_id, params.is_longtail,
+                    tick_count=sync_ts.frame_count,
+                    sim_elapsed_ns=sync_ts.elapsed_time,
+                )
                 if snap and snap.ego:
-                    now = time.time()
-                    if now - last_save >= save_period:
-                        frame_id           += 1
-                        snap.frame_id       = frame_id
-                        snap.nav_waypoints  = _nav_waypoints(scenario.route_points, snap.ego)
-                        snap.nav_link_ids   = scenario.route_links
-                        writer.write_frame(snap)
-                        last_save = now
-                time.sleep(0.01)
+                    frame_id           += 1
+                    snap.frame_id        = frame_id
+                    snap.nav_waypoints   = _nav_waypoints(scenario.route_points, snap.ego)
+                    snap.nav_link_ids    = scenario.route_links
+                    writer.write_frame(snap)
+
+                    if args.show_bev and snap.bev_map is not None:
+                        import cv2
+                        cv2.imshow("BEV (live)", _bev_to_bgr(snap.bev_map))
+                        cv2.waitKey(1)
 
             summary = writer.end_episode(True, "lap_complete")
             print(f"[run_collect] Episode {episode_id:03d} 저장 완료 "
@@ -180,6 +209,9 @@ def main():
     except KeyboardInterrupt:
         print("\n[run_collect] 중단됨 (Ctrl+C)")
     finally:
+        if args.show_bev:
+            import cv2
+            cv2.destroyAllWindows()
         try:
             scenario.cleanup()
         except Exception as e:

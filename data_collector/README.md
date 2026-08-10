@@ -1,5 +1,14 @@
 # MORAI 데이터 수집 자동화
 
+## 실행 가능한 시나리오 이름
+
+`--scenario` 인자로 쓸 수 있는 이름 (zone은 `urban`만 지원):
+
+- `basic_drive`
+- `sudden_brake`
+- `traffic_jam`
+- `pedestrian_yield`
+
 ## 폴더 구조
 
 ```
@@ -48,6 +57,7 @@ D:/morai_dataset/
 | `ego` | (6,) | float32 | x, y, z, yaw, speed, steer |
 | `gnss` | (6,) | float32 | lat, lon, alt, vel_x, vel_y, vel_z |
 | `imu` | (6,) | float32 | accel xyz, gyro xyz |
+| `lidar` | (N, 4) | float32 | x, y, z, intensity (VLP16) |
 | `gt_objects` | (N, 7) | float32 | id, type, x, y, z, vel_x, vel_y |
 | `tl_states` | (M, 2) | int32 | tl_id_hash, state(0~9) |
 | `nav_waypoints` | (N, 2) | float32 | 전역 경로 x, y |

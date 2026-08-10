@@ -3,13 +3,13 @@
 #
 # 사용법:
 #   1. VSCode에 Python + Jupyter 확장 설치 확인
-#   2. 아래 EPISODE_DIR / FRAME_ID 를 확인하려는 episode 폴더/프레임 번호로 수정
+#   2. 아래 EPISODE_DIR / FRAME_FILENAME 을 확인하려는 episode 폴더/프레임 파일명으로 수정
 #   3. 셀마다 "▶ Run Cell" 클릭 (또는 Shift+Enter) 순서대로 실행
 #
 # 이 프로젝트의 실제 npz 키 (data_writer.py 기준):
 #   timestamp_ns, frame_id, is_longtail,
 #   cam_front, cam_left, cam_right, cam_back,
-#   ego(6), gnss(6), imu(6),
+#   ego(6), gnss(6), imu(6), lidar(N,4)=[x,y,z,intensity],
 #   gt_objects(N,7), tl_states(M,2),
 #   nav_waypoints(N,2), nav_link_ids(K,),
 #   gt_lane_geometry(M,4), gt_stopline_geometry(K,3),
@@ -20,8 +20,8 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
-EPISODE_DIR = "/mnt/z/AIM_2026/대회/2026 대학생 AI SW 자율주행 경진대회/Team A.I.M/zone_urban/scenario_sudden_brake/scenario_run_018/episode_001"
-FRAME_ID = 18  # 8번 셀에서 자세히 볼 프레임 번호
+EPISODE_DIR = "/mnt/z/AIM_2026/대회/2026 대학생 AI SW 자율주행 경진대회/Team A.I.M/zone_urban/scenario_sudden_brake/scenario_run_022/episode_002"
+FRAME_FILENAME = "000018.npz"  # 3,6,8번 셀에서 자세히 볼 프레임 파일명
 
 frame_files = sorted(glob.glob(f"{EPISODE_DIR}/frames/*.npz"))
 print(f"episode: {EPISODE_DIR}")
@@ -69,11 +69,17 @@ print(f"gt_objects 개수 범위: min={min(gt_obj_counts)} max={max(gt_obj_count
 # 이후 셀은 손상된 파일을 제외한 목록으로 진행
 frame_files = valid_frame_files
 
+# FRAME_FILENAME으로 실제 파일 경로 찾기 (3,6,8번 셀에서 사용)
+frame_path = next((f for f in frame_files if f.endswith(FRAME_FILENAME)), None)
+if frame_path is None:
+    raise FileNotFoundError(f"{FRAME_FILENAME} 을 찾을 수 없습니다 (손상되어 제외됐거나 오타)")
+print(f"선택된 프레임: {frame_path}")
+
 # %% [markdown]
 # ## 3. 카메라 멀티뷰 grid
 
 # %%
-d = np.load(frame_files[FRAME_ID - 1], allow_pickle=True)
+d = np.load(frame_path, allow_pickle=True)
 cam_keys = [k for k in d.files if k.startswith("cam_")]
 
 fig, axes = plt.subplots(1, len(cam_keys), figsize=(4 * len(cam_keys), 4))
@@ -132,14 +138,14 @@ DRAW_ORDER = [6, 0, 1, 2, 3, 4, 7, 5]
 CLASS_NAMES = {0: "background", 1: "center_yellow", 2: "solid", 3: "dashed",
                4: "stopline", 5: "dynamic", 6: "drivable", 7: "crosswalk"}
 
-bev = np.load(frame_files[FRAME_ID - 1])["bev_map"]
+bev = np.load(frame_path)["bev_map"]
 bev_rgb = np.zeros((*bev.shape[:2], 3), dtype=np.uint8)
 for ch in DRAW_ORDER:
     bev_rgb[bev[:, :, ch] > 0.5] = BEV_COLORS[ch]
 
 plt.figure(figsize=(5, 5))
 plt.imshow(bev_rgb)
-plt.title(f"bev_map (frame {FRAME_ID})")
+plt.title(f"bev_map ({FRAME_FILENAME})")
 plt.axis("off")
 plt.show()
 
@@ -171,7 +177,7 @@ plt.show()
 # ## 8. 프레임 하나 종합 확인 (카메라 + BEV + action)
 
 # %%
-d = np.load(frame_files[FRAME_ID - 1], allow_pickle=True)
+d = np.load(frame_path, allow_pickle=True)
 print(f"frame_id={int(d['frame_id'][0])}  is_longtail={bool(d['is_longtail'][0])}")
 print(f"ego(x,y,z,yaw,speed,steer) = {d['ego']}")
 print(f"gnss = {d['gnss']}")

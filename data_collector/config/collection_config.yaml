@@ -16,6 +16,7 @@ ros:
     camera_back:  "/back"
     gnss:               "/gps"
     imu:                "/imu"
+    lidar:              "/lidar"   # TODO: 실제 MORAI sensor setting에서 지정한 토픽명으로 확인/수정
     gt_objects:         "/Object_topic"
     gt_lanes:           "/morai/gt/lanes"
     traffic_light:      "/GetTrafficLightStatus"

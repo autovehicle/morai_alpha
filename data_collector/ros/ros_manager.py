@@ -28,7 +28,8 @@ import numpy as np
 try:
     import rospy
     from cv_bridge import CvBridge
-    from sensor_msgs.msg import Image, CompressedImage, Imu, NavSatFix
+    from sensor_msgs.msg import Image, CompressedImage, Imu, NavSatFix, PointCloud2
+    from sensor_msgs import point_cloud2
     # MORAI 전용 메시지 (설치된 morai_msgs 패키지 기준)
     from morai_msgs.msg import (
         EgoVehicleStatus,
@@ -43,7 +44,7 @@ except ImportError:
     rospy = None
 
 from core.data_writer import (
-    CameraFrame, GNSSData, IMUData, EgoState,
+    CameraFrame, GNSSData, IMUData, EgoState, LidarFrame,
     GTObject, GTLane, TrafficLightState, SensorSnapshot
 )
 
@@ -71,6 +72,7 @@ class ROSManager:
         self._gnss:    Optional[GNSSData]     = None
         self._imu:     Optional[IMUData]      = None
         self._ego:     Optional[EgoState]     = None
+        self._lidar:   Optional[LidarFrame]   = None
         self._gt_objects = []
         self._gt_lanes   = []
         self._tl_states  = []
@@ -119,6 +121,14 @@ class ROSManager:
         rospy.Subscriber(self.topics["imu"], Imu,
                          self._cb_imu, queue_size=5)
 
+        # LiDAR (VLP16, sensor_msgs/PointCloud2)
+        lidar_topic = self.topics.get("lidar")
+        if lidar_topic:
+            rospy.Subscriber(lidar_topic, PointCloud2,
+                             self._cb_lidar, queue_size=1)
+        else:
+            print("[ROSManager] WARNING: config에 ros.topics.lidar 미설정 — LiDAR 구독 안 함")
+
         # GT 객체
         rospy.Subscriber(self.topics["gt_objects"], ObjectStatusList,
                          self._cb_objects, queue_size=2)
@@ -152,7 +162,8 @@ class ROSManager:
 
     # ── 스냅샷 반환 ──────────────────────────────────────────
 
-    def get_snapshot(self, frame_id: int, is_longtail: bool) -> Optional[SensorSnapshot]:
+    def get_snapshot(self, frame_id: int, is_longtail: bool,
+                      tick_count: int = 0, sim_elapsed_ns: int = 0) -> Optional[SensorSnapshot]:
         """
         현재 버퍼에서 카메라 타임스탬프를 기준으로 동기화된 스냅샷 반환.
         카메라 데이터가 없으면 None 반환.
@@ -174,6 +185,9 @@ class ROSManager:
             if imu and abs(imu.timestamp_ns - ref_ts) > self.SYNC_WINDOW_NS:
                 imu = None
 
+            # LiDAR는 최대 15Hz(권장 10Hz)로 카메라(10Hz)보다 느리거나 비슷해
+            # GNSS/IMU용 ±20ms 윈도우를 그대로 적용하면 대부분 탈락한다.
+            # ego/gt_objects와 동일하게 별도 staleness 체크 없이 최신 버퍼값을 사용.
             snap = SensorSnapshot(
                 frame_id      = frame_id,
                 timestamp_ns  = ref_ts,
@@ -181,6 +195,7 @@ class ROSManager:
                 gnss          = gnss,
                 imu           = imu,
                 ego           = self._ego,
+                lidar         = self._lidar,
                 gt_objects    = list(self._gt_objects),
                 gt_lanes      = list(self._gt_lanes),
                 tl_states     = list(self._tl_states),
@@ -188,6 +203,8 @@ class ROSManager:
                 expert_steer    = self._expert_steer,
                 expert_throttle = self._expert_throttle,
                 expert_brake    = self._expert_brake,
+                tick_count     = tick_count,
+                sim_elapsed_ns = sim_elapsed_ns,
             )
         return snap
 
@@ -267,6 +284,23 @@ class ROSManager:
                 )
         except Exception as e:
             print(f"[ROSManager] IMU 콜백 오류: {e}")
+
+    def _cb_lidar(self, msg: "PointCloud2"):
+        """
+        sensor_msgs/PointCloud2 기준 (VLP16).
+        필드: x, y, z, intensity (센서 좌표계, m / 반사강도).
+        """
+        try:
+            ts = msg.header.stamp.secs * 1_000_000_000 + msg.header.stamp.nsecs
+            pts = np.array(list(point_cloud2.read_points(
+                msg, field_names=("x", "y", "z", "intensity"), skip_nans=True
+            )), dtype=np.float32)
+            if pts.size == 0:
+                pts = np.zeros((0, 4), dtype=np.float32)
+            with self._lock:
+                self._lidar = LidarFrame(timestamp_ns=ts, points=pts)
+        except Exception as e:
+            print(f"[ROSManager] LiDAR 콜백 오류: {e}")
 
     def _cb_objects(self, msg: "ObjectStatusList"):
         """

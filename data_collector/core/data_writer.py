@@ -92,6 +92,13 @@ class EgoState:
 
 
 @dataclass
+class LidarFrame:
+    """VLP16 LiDAR 1스캔. points: (N, 4) — x, y, z(m, 센서 좌표계), intensity"""
+    timestamp_ns: int
+    points: np.ndarray         # shape: (N, 4)
+
+
+@dataclass
 class GTObject:
     obj_id: int
     obj_type: str              # "vehicle" | "pedestrian" | "static"
@@ -128,6 +135,7 @@ class SensorSnapshot:
     imu: Optional[IMUData]
     ego: Optional[EgoState]
 
+    lidar: Optional[LidarFrame] = None
     gt_objects: List[GTObject] = field(default_factory=list)
     gt_lanes: List[GTLane]     = field(default_factory=list)
     tl_states: List[TrafficLightState] = field(default_factory=list)
@@ -142,6 +150,8 @@ class SensorSnapshot:
     bev_map: Optional[np.ndarray] = None         # shape: (H, W, 8)
 
     is_longtail: bool = False
+    tick_count: int = 0          # gRPC SyncTimestamp.frame_count
+    sim_elapsed_ns: int = 0      # gRPC SyncTimestamp.elapsed_time
 
 
 # ─────────────────────────────────────────────
@@ -305,7 +315,7 @@ class BEVMapGenerator:
         local_x =  cos_y * dx - sin_y * dy
         local_y =  sin_y * dx + cos_y * dy
         row = int((self.FRONT_M - local_x) / self.RES_M)
-        col = int((self.SIDE_M  + local_y) / self.RES_M)
+        col = int((self.SIDE_M  - local_y) / self.RES_M)
         return row, col
 
     def _world_pts_to_bev(self, ego: EgoState,
@@ -318,7 +328,7 @@ class BEVMapGenerator:
         local_x = cos_y * dx - sin_y * dy
         local_y = sin_y * dx + cos_y * dy
         rows = (self.FRONT_M - local_x) / self.RES_M
-        cols = (self.SIDE_M  + local_y) / self.RES_M
+        cols = (self.SIDE_M  - local_y) / self.RES_M
         # cv2.polylines 는 (N, 1, 2) int32, 순서는 (x=col, y=row)
         return np.stack([cols, rows], axis=1).reshape(-1, 1, 2).astype(np.int32)
 
@@ -513,6 +523,10 @@ class DataWriter:
             imu.gyro_x,  imu.gyro_y,  imu.gyro_z
         ], dtype=np.float32) if imu else np.zeros(6, dtype=np.float32)
 
+        # ── LiDAR 포인트 배열 (N, 4): x, y, z, intensity ─────────
+        lidar_arr = snap.lidar.points.astype(np.float32) if snap.lidar is not None \
+                    else np.zeros((0, 4), dtype=np.float32)
+
         # ── nav waypoints / 도로 링크 ID ────────────────────────
         nav_wp = snap.nav_waypoints if snap.nav_waypoints is not None \
                  else np.zeros((0, 2), dtype=np.float32)
@@ -531,6 +545,8 @@ class DataWriter:
             "timestamp_ns":   np.array([snap.timestamp_ns], dtype=np.int64),
             "frame_id":       np.array([snap.frame_id],     dtype=np.int32),
             "is_longtail":    np.array([snap.is_longtail],  dtype=bool),
+            "tick_count":     np.array([snap.tick_count],     dtype=np.int64),
+            "sim_elapsed_ns": np.array([snap.sim_elapsed_ns], dtype=np.int64),
             # 카메라
             "cam_front": cameras["front"],
             "cam_left":  cameras["left"],
@@ -540,6 +556,7 @@ class DataWriter:
             "ego":     ego_arr,
             "gnss":    gnss_arr,
             "imu":     imu_arr,
+            "lidar":   lidar_arr,       # (N,4): x, y, z, intensity
             # GT
             "gt_objects": gt_objects_arr,
             "tl_states":   tl_arr,
