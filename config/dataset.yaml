@@ -1,0 +1,75 @@
+schema_version: "0.1.0-draft"
+
+collection:
+  output_root: "./datasets/morai"
+  sequence_id: null
+  frame_digits: 6
+
+synchronization:
+  # The anchor can be changed after the real sensor interfaces are selected.
+  anchor_stream: "lidar"
+  max_buffer_size: 256
+  tolerance_ns:
+    # MORAI publishes all 3 cameras interleaved on one ROS topic
+    # (/image_jpeg/compressed), demuxed by header.frame_id into these 3
+    # synchronizer streams — see dataset/collector.py.
+    camera_1: 50000000
+    camera_2: 50000000
+    camera_3: 50000000
+    lidar: 0
+    ego: 50000000
+    objects: 50000000
+
+coordinate_convention:
+  name: "morai_world_x_forward_ccw__PROVISIONAL"
+  yaw_zero_axis: "+x"
+  yaw_positive: "counter_clockwise"
+  object_heading_matches_ego_yaw: true
+  size_x_is_length: true
+  size_y_is_width: true
+  verified: true
+
+class_mapping:
+  0: "pedestrian"
+  1: "vehicle"
+  2: "obstacle"
+
+sensors:
+  # Active transport is ROS (adapters/ros/), running as native rospy nodes
+  # inside the same WSL machine as roscore. rosbridge/WebSocket is only the
+  # bridge MORAI (Windows, no ROS) uses to reach the ROS graph — it is not
+  # part of this process's own data path. MORAI's Bridge IP must be the
+  # current WSL IP (`hostname -I`), not 127.0.0.1.
+  #
+  # The older UDP transport (sensors/camera_receiver.py, network/UDP/) is
+  # still present and working, just not the active default here — see
+  # docs/UDP_COLLECTION_SETUP.md if switching back.
+  camera:
+    transport: "ros_native"
+    topic: "/image_jpeg/compressed"
+    codec: "jpg"
+    # MORAI publishes all cameras on this one topic, distinguished by
+    # header.frame_id (confirmed via rostopic echo).
+    frame_ids: ["Camera-1", "Camera-2", "Camera-3"]
+    extrinsic_verified: true  # confirmed via /tf (base_link -> Camera-N) + LiDAR reprojection onto Camera-1 image
+  lidar:
+    transport: "ros_native"
+    topic: "/lidar3D"
+    model: "VLP16"
+    rotation_rate_hz: 10
+    point_fields: ["x", "y", "z", "intensity"]
+    extrinsic_verified: true  # confirmed via /tf (base_link -> Lidar3D-4) + ground-plane check + reprojection onto Camera-1 image
+  ego:
+    transport: "ros_native"
+    topic: "/Ego_topic"
+    message_type: "morai_msgs/EgoVehicleStatus"
+    # EgoVehicleStatus only reports yaw (heading); roll/pitch are recovered
+    # from the map -> base_link quaternion on this topic.
+    tf_topic: "/tf"
+    # UDP EgoState documents vel_x/y/z as km/h; MORAI's ROS velocity units
+    # have not been empirically confirmed yet (checked while stationary).
+    velocity_unit_verified: false
+  objects:
+    transport: "ros_native"
+    topic: "/Object_topic"
+    message_type: "morai_msgs/ObjectStatusList"

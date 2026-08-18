@@ -9,7 +9,7 @@ MORAI SIM:Drive 시뮬레이터와 UDP 통신으로:
   - 신호등 상태 강제 변경     (선택적)
 
 사용법:
-    from network.udp_manager import UdpManager
+    from network.UDP.udp_manager import UdpManager
 
     manager = UdpManager()
     manager.start()
@@ -22,10 +22,12 @@ MORAI SIM:Drive 시뮬레이터와 UDP 통신으로:
     manager.send_ctrl(accel=0.5, brake=0.0, steer=0.1)
 """
 import json
+import threading
+from collections import deque
 from pathlib import Path
 
 from .protocol import (
-    EgoState, ObjectData, TrafficLightData,
+    EgoState, ObjectData, ObjectFrame, TrafficLightData,
     OBJ_TYPE_VEHICLE, OBJ_TYPE_PEDESTRIAN,
     TL_GREEN,
 )
@@ -36,11 +38,13 @@ from .sender import CtrlCmdSender, TrafficLightSender
 class UdpManager:
     """MORAI ↔ User UDP 통신을 관리하는 중앙 클래스."""
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, buffer_size: int = 256):
         """
         Args:
             config_path: ipconfig.json 경로.
                          None이면 network/ipconfig.json 자동 탐색.
+            buffer_size: Dataset consumer가 drain할 수 있도록 보관할
+                         Ego/Object packet 수. 최신값 API와 독립적이다.
         """
         if config_path is None:
             config_path = str(Path(__file__).parent / 'ipconfig.json')
@@ -61,10 +65,19 @@ class UdpManager:
         self._ctrl_port   = int(net['ctrl_cmd_host_port'])     # 9095
         self._tl_set_port = int(net['set_traffic_host_port'])  # 7607
 
+        if buffer_size <= 0:
+            raise ValueError('buffer_size must be positive')
+
         # ── 상태 저장소 ────────────────────────────────────────────
+        self._state_lock = threading.RLock()
         self._ego_state:     EgoState           = None
         self._object_list:   list[ObjectData]   = []
+        self._object_frame:  ObjectFrame        = None
         self._traffic_light: TrafficLightData   = None
+        self._ego_buffer = deque(maxlen=buffer_size)
+        self._object_buffer = deque(maxlen=buffer_size)
+        self._ego_buffer_dropped = 0
+        self._object_buffer_dropped = 0
 
         # ── 수신기 / 송신기 (start() 에서 생성) ────────────────────
         self._ego_rx:  EgoReceiver          = None
@@ -83,32 +96,89 @@ class UdpManager:
     @property # 읽기 전용 속성: self._ego_state 를 외부에서 수정하지 못하게 막음. 하지만 외부에서는 manager.ego_state 로 쉽게 읽을 수 있음. (상태 변조 막음)
     def ego_state(self) -> EgoState:
         """최신 ego 차량 상태. 아직 수신 전이면 None."""
-        return self._ego_state
+        with self._state_lock:
+            return self._ego_state
 
     @property
     def object_list(self) -> list:
         """최신 주변 객체 리스트. 빈 리스트일 수 있음."""
-        return self._object_list
+        with self._state_lock:
+            return list(self._object_list)
+
+    @property
+    def object_frame(self) -> ObjectFrame:
+        """Latest Object Info packet, including an empty-frame timestamp."""
+        with self._state_lock:
+            if self._object_frame is None:
+                return None
+            return ObjectFrame(self._object_frame,
+                               timestamp_ns=self._object_frame.timestamp_ns)
 
     @property
     def vehicle_list(self) -> list:
         """object_list 중 차량(obj_type=1)만 필터링."""
-        return [o for o in self._object_list if o.obj_type == OBJ_TYPE_VEHICLE] # python의 간결한 반복문: self._object_list를 돌면서 특정 조건(o.obj_type == OBJ_TYPE_VEHICLE)을 만족하는 요소만 골라서 새 리스트로 반환. (OBJ_TYPE_VEHICLE에 대한 정의는 protocol.py 참고)
+        with self._state_lock:
+            return [o for o in self._object_list
+                    if o.obj_type == OBJ_TYPE_VEHICLE]
         
     @property
     def pedestrian_list(self) -> list:
         """object_list 중 보행자(obj_type=0)만 필터링."""
-        return [o for o in self._object_list if o.obj_type == OBJ_TYPE_PEDESTRIAN]
+        with self._state_lock:
+            return [o for o in self._object_list
+                    if o.obj_type == OBJ_TYPE_PEDESTRIAN]
 
     @property
     def traffic_light(self) -> TrafficLightData:
         """최신 신호등 상태. 아직 수신 전이면 None."""
-        return self._traffic_light
+        with self._state_lock:
+            return self._traffic_light
 
     @property
     def is_ready(self) -> bool:
         """ego 데이터가 한 번 이상 수신됐으면 True."""
-        return self._ego_state is not None
+        with self._state_lock:
+            return self._ego_state is not None
+
+    def snapshot_latest(self) -> tuple:
+        """Atomically read the legacy latest-value view.
+
+        This method exists for diagnostics such as the old BEV renderer. A
+        Dataset recorder must use the timestamped buffers and synchronizer
+        instead of treating this tuple as a synchronized sample.
+        """
+        with self._state_lock:
+            objects = ObjectFrame(
+                self._object_frame or (),
+                timestamp_ns=(self._object_frame.timestamp_ns
+                              if self._object_frame is not None else 0),
+            )
+            return self._ego_state, objects, self._traffic_light
+
+    def drain_ego_states(self) -> list:
+        """Return and clear buffered Ego packets in receive order."""
+        with self._state_lock:
+            values = list(self._ego_buffer)
+            self._ego_buffer.clear()
+            return values
+
+    def drain_object_frames(self) -> list:
+        """Return and clear buffered Object packets in receive order."""
+        with self._state_lock:
+            values = list(self._object_buffer)
+            self._object_buffer.clear()
+            return values
+
+    @property
+    def buffer_stats(self) -> dict:
+        """Expose bounded-buffer loss so a collection run can be rejected."""
+        with self._state_lock:
+            return {
+                'ego_pending': len(self._ego_buffer),
+                'objects_pending': len(self._object_buffer),
+                'ego_dropped': self._ego_buffer_dropped,
+                'objects_dropped': self._object_buffer_dropped,
+            }
 
     # ═══════════════════════════════════════════════════════════════
     # 시작 / 종료
@@ -178,13 +248,31 @@ class UdpManager:
     # ═══════════════════════════════════════════════════════════════
 
     def _on_ego(self, ego: EgoState):
-        self._ego_state = ego
+        with self._state_lock:
+            self._ego_state = ego
+            if len(self._ego_buffer) == self._ego_buffer.maxlen:
+                self._ego_buffer_dropped += 1
+            self._ego_buffer.append(ego)
 
     def _on_objects(self, objects: list):
-        self._object_list = objects if objects else []
+        if isinstance(objects, ObjectFrame):
+            frame = objects
+        else:
+            # Backward-compatible path for tests/custom callbacks that still
+            # pass a plain list. A packet timestamp cannot be recovered from
+            # an empty plain list.
+            timestamp_ns = objects[0].timestamp_ns if objects else 0
+            frame = ObjectFrame(objects or (), timestamp_ns=timestamp_ns)
+        with self._state_lock:
+            self._object_frame = frame
+            self._object_list = list(frame)
+            if len(self._object_buffer) == self._object_buffer.maxlen:
+                self._object_buffer_dropped += 1
+            self._object_buffer.append(frame)
 
     def _on_traffic_light(self, tl: TrafficLightData):
-        self._traffic_light = tl
+        with self._state_lock:
+            self._traffic_light = tl
 
         # 신호등 강제 녹색 모드
         if self.traffic_light_control and tl is not None:

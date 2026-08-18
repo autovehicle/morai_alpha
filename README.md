@@ -1,2 +1,32 @@
-# morai_roach
-RL Teacher -> Drive Adapter End-to-End Autonomous Driving Model, embody in MORAI Sim
+# morai_alpha
+
+`morai_alpha` is the MORAI data acquisition repository for the camera-LiDAR
+object-perception project. Its responsibility is limited to:
+
+- receiving Camera, LiDAR, Ego Status, and Object Info data from MORAI;
+- preserving source timestamps and raw privileged ground truth;
+- synchronizing independently arriving streams;
+- converting world-frame object ground truth into a verified ego/BEV frame;
+- recording and validating a versioned dataset for the separate TransFuser repository.
+
+This repository does **not** train TransFuser, PPO/RL, imitation-learning,
+waypoint, PID, temporal BEV, motion-head, or relative-velocity models.
+
+## Current status
+
+MORAI-to-collector transport is UDP for Camera, LiDAR, Ego Status, and Object
+Info. Camera UDP JPEG reassembly is implemented with source timestamp and
+packet-loss accounting. VLP16 UDP reception has been verified through the
+official Velodyne driver; this local decoder does not use rosbridge/WebSocket.
+The coordinate convention remains intentionally unverified until it is checked
+in the competition MORAI environment.
+
+See:
+
+- `docs/REPOSITORY_AUDIT.md` for the KEEP/REFACTOR/LEGACY/UNKNOWN audit;
+- `docs/DATASET_SCHEMA.md` for the draft repository-to-TransFuser contract;
+- `docs/COORDINATE_CONVENTIONS.md` for the coordinate validation checklist.
+- `docs/UDP_COLLECTION_SETUP.md` for the MORAI/WSL UDP setup and smoke tests.
+
+The existing RL/ROACH files remain in place as legacy candidates. No legacy
+code or collected artifact has been deleted during the first refactoring pass.

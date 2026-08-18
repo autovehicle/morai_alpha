@@ -16,7 +16,8 @@ import threading
 
 from .protocol import (
     HEADER_EGO, HEADER_OBJ, HEADER_TL,
-    EgoState, ObjectData, TrafficLightData,
+    EgoState, ObjectData, ObjectFrame, TrafficLightData,
+    timestamp_to_ns,
 )
 
 # ═══════════════════════════════════════════════════════════════════
@@ -133,6 +134,9 @@ class EgoReceiver(_BaseReceiver):
 
         ego = EgoState()
 
+        # ── timestamp ──
+        ego.timestamp_ns = timestamp_to_ns(f(27), f(31))
+
         # ── 제어 ──
         ego.ctrl_mode     = b(35)
         ego.gear          = b(36)
@@ -218,6 +222,11 @@ class ObjectReceiver(_BaseReceiver):
         if raw[:self._HEADER_LEN] != self._HEADER:
             return None
 
+        # ── timestamp ──
+        timestamp_sec = struct.unpack_from('<f', raw, self._HEADER_LEN + 4 + 12)[0]
+        timestamp_nsec = struct.unpack_from('<f', raw, self._HEADER_LEN + 4 + 12 + 4)[0]
+        timestamp_ns = timestamp_to_ns(timestamp_sec, timestamp_nsec)
+
         remaining = len(raw) - self._OBJ_START
 
         # ── per-object 크기 판별: 106(link_id 포함) vs 68(숫자만) ──
@@ -248,6 +257,7 @@ class ObjectReceiver(_BaseReceiver):
                 continue
 
             objects.append(ObjectData(
+                timestamp_ns = timestamp_ns,
                 obj_id   = obj_id,
                 obj_type = vals[1],
                 pos_x    = vals[2],
@@ -268,7 +278,9 @@ class ObjectReceiver(_BaseReceiver):
                 acc_z    = vals[17],
             ))
 
-        return objects
+        # Keep list compatibility while preserving the packet timestamp even
+        # when this is a valid, empty Object Info frame.
+        return ObjectFrame(objects, timestamp_ns=timestamp_ns)
 
 
 # ═══════════════════════════════════════════════════════════════════
