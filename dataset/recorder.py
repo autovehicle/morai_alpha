@@ -6,9 +6,9 @@ import os
 import re
 import tempfile
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 from .schema import (
     FrameMetadata,
@@ -34,6 +34,7 @@ class SensorArtifact:
     timestamp_ns: int
     source_frame_id: Optional[SourceFrameId] = None
     clock_domain: str = 'morai_simulation'
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 class DatasetRecorder:
@@ -155,6 +156,7 @@ class DatasetRecorder:
                 'timestamp_ns': artifact.timestamp_ns,
                 'source_frame_id': artifact.source_frame_id,
                 'clock_domain': artifact.clock_domain,
+                'metadata': dict(artifact.metadata),
                 'size_bytes': len(artifact.content),
                 'sha256': hashlib.sha256(artifact.content).hexdigest(),
             })

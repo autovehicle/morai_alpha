@@ -6,6 +6,9 @@ collection:
   frame_digits: 6
 
 synchronization:
+  # MORAI's ROS bridge currently emits sensor-specific header clocks that can
+  # differ by many seconds. Use monotonic callback arrival time as the shared clock.
+  timestamp_source: "arrival"
   # The anchor can be changed after the real sensor interfaces are selected.
   anchor_stream: "lidar"
   max_buffer_size: 256
@@ -13,12 +16,12 @@ synchronization:
     # MORAI publishes all 3 cameras interleaved on one ROS topic
     # (/image_jpeg/compressed), demuxed by header.frame_id into these 3
     # synchronizer streams — see dataset/collector.py.
-    camera_1: 50000000
-    camera_2: 50000000
-    camera_3: 50000000
+    camera_1: 80000000
+    camera_2: 80000000
+    camera_3: 80000000
     lidar: 0
-    ego: 50000000
-    objects: 50000000
+    ego: 80000000
+    objects: 80000000
 
 coordinate_convention:
   name: "morai_world_x_forward_ccw__PROVISIONAL"

@@ -23,6 +23,7 @@ rosbridge/websocket involved on this side.
 """
 
 import threading
+import time
 from typing import Callable, Mapping, Optional
 
 import rospy
@@ -34,10 +35,10 @@ from network.UDP.protocol import (
     OBJ_TYPE_VEHICLE,
     ObjectData,
     ObjectFrame,
-    timestamp_to_ns,
 )
 
 from ._rosnode import ensure_node_initialized
+from ._timestamp import resolve_timestamp_ns, validate_timestamp_source
 
 DEFAULT_TOPIC = '/Object_topic'
 
@@ -70,6 +71,7 @@ class RosGtReceiver:
         self,
         topic: str = DEFAULT_TOPIC,
         queue_size: int = 1,
+        timestamp_source: str = 'header',
         node_name: Optional[str] = None,
         auto_init_node: bool = True,
     ):
@@ -77,6 +79,7 @@ class RosGtReceiver:
             raise ValueError('topic must be non-empty')
         self.topic = topic
         self.queue_size = int(queue_size)
+        self.timestamp_source = validate_timestamp_source(timestamp_source)
         self.node_name = node_name or 'morai_alpha_gt'
         self.auto_init_node = bool(auto_init_node)
         self._subscriber = None
@@ -115,11 +118,14 @@ class RosGtReceiver:
             subscriber.unregister()
 
     def _on_message(self, msg: ObjectStatusList) -> None:
+        received_monotonic_ns = time.monotonic_ns()
         callback = self._callback
         if callback is None:
             return
         self._stats['messages'] += 1
-        timestamp_ns = timestamp_to_ns(msg.header.stamp.secs, msg.header.stamp.nsecs)
+        timestamp_ns, _raw_header_timestamp_ns = resolve_timestamp_ns(
+            msg.header.stamp, self.timestamp_source, received_monotonic_ns
+        )
         objects = (
             [_object_data(obj, OBJ_TYPE_VEHICLE, timestamp_ns) for obj in msg.npc_list]
             + [_object_data(obj, OBJ_TYPE_PEDESTRIAN, timestamp_ns) for obj in msg.pedestrian_list]

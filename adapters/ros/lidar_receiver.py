@@ -11,6 +11,7 @@ MORAI (Windows, no ROS) to reach the ROS graph.
 """
 
 import threading
+import time
 from typing import Callable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -18,10 +19,14 @@ import rospy
 from sensor_msgs import point_cloud2
 from sensor_msgs.msg import PointCloud2
 
-from network.UDP.protocol import timestamp_to_ns
 from sensors.base import SensorFrame, SensorReceiver
 
 from ._rosnode import ensure_node_initialized
+from ._timestamp import (
+    clock_domain_for,
+    resolve_timestamp_ns,
+    validate_timestamp_source,
+)
 
 DEFAULT_TOPIC = '/lidar3D'
 PREFERRED_FIELD_ORDER = ('x', 'y', 'z', 'intensity')
@@ -47,6 +52,7 @@ class RosLidarReceiver(SensorReceiver):
         sensor_id: str,
         topic: str = DEFAULT_TOPIC,
         queue_size: int = 1,
+        timestamp_source: str = 'header',
         node_name: Optional[str] = None,
         auto_init_node: bool = True,
     ):
@@ -57,6 +63,8 @@ class RosLidarReceiver(SensorReceiver):
         self.sensor_id = sensor_id
         self.topic = topic
         self.queue_size = int(queue_size)
+        self.timestamp_source = validate_timestamp_source(timestamp_source)
+        self.clock_domain = clock_domain_for(self.timestamp_source)
         self.node_name = node_name or 'morai_alpha_lidar_{0}'.format(sensor_id)
         self.auto_init_node = bool(auto_init_node)
         self._subscriber = None
@@ -94,6 +102,7 @@ class RosLidarReceiver(SensorReceiver):
             subscriber.unregister()
 
     def _on_message(self, msg: PointCloud2) -> None:
+        received_monotonic_ns = time.monotonic_ns()
         callback = self._callback
         if callback is None:
             return
@@ -104,12 +113,16 @@ class RosLidarReceiver(SensorReceiver):
              for value in point),
             dtype=np.float32,
         ).reshape(-1, len(field_names))
+        selected_timestamp_ns, raw_header_timestamp_ns = resolve_timestamp_ns(
+            msg.header.stamp, self.timestamp_source, received_monotonic_ns
+        )
         frame = SensorFrame(
             sensor_id=self.sensor_id,
             modality='lidar',
-            timestamp_ns=timestamp_to_ns(msg.header.stamp.secs, msg.header.stamp.nsecs),
+            timestamp_ns=selected_timestamp_ns,
             payload=points,
             source_frame_id=msg.header.frame_id,
+            clock_domain=self.clock_domain,
             metadata={
                 'field_names': field_names,
                 'height': msg.height,
@@ -118,6 +131,9 @@ class RosLidarReceiver(SensorReceiver):
                 'is_dense': msg.is_dense,
                 'seq': msg.header.seq,
                 'topic': self.topic,
+                'timestamp_source': self.timestamp_source,
+                'received_monotonic_ns': received_monotonic_ns,
+                'raw_header_timestamp_ns': raw_header_timestamp_ns,
             },
         )
         try:

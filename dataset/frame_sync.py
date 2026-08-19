@@ -84,6 +84,11 @@ class FrameSynchronizer:
             'stale': 0,
             'unmatched_anchors': 0,
             'matched': 0,
+            'unmatched_by_stream': {
+                stream: 0
+                for stream in self.required_streams
+                if stream != self.anchor_stream
+            },
         }
 
     def add(self, stream: str, sample: TimedSample[Any]) -> bool:
@@ -140,6 +145,7 @@ class FrameSynchronizer:
                     break
                 if buffer[0].timestamp_ns > upper_bound:
                     anchor_is_hopeless = True
+                    self.stats['unmatched_by_stream'][stream] += 1
                     break
                 if not force and buffer[-1].timestamp_ns < anchor.timestamp_ns:
                     must_wait = True
@@ -162,6 +168,8 @@ class FrameSynchronizer:
                 if abs(candidate.timestamp_ns - anchor.timestamp_ns) > tolerance:
                     anchor_is_hopeless = candidate.timestamp_ns > upper_bound
                     must_wait = not anchor_is_hopeless
+                    if anchor_is_hopeless:
+                        self.stats['unmatched_by_stream'][stream] += 1
                     break
                 selected[stream] = (index, candidate)
 

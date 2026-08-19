@@ -30,6 +30,7 @@ rosbridge/websocket involved on this side.
 """
 
 import threading
+import time
 from typing import Callable, Mapping, Optional
 
 import rospy
@@ -37,9 +38,10 @@ from morai_msgs.msg import EgoVehicleStatus
 from tf2_msgs.msg import TFMessage
 
 from geometry.coordinate_transform import quaternion_to_roll_pitch_yaw_deg
-from network.UDP.protocol import EgoState, timestamp_to_ns
+from network.UDP.protocol import EgoState
 
 from ._rosnode import ensure_node_initialized
+from ._timestamp import resolve_timestamp_ns, validate_timestamp_source
 
 DEFAULT_TOPIC = '/Ego_topic'
 DEFAULT_TF_TOPIC = '/tf'
@@ -61,6 +63,7 @@ class RosEgoReceiver:
         map_frame: str = DEFAULT_MAP_FRAME,
         base_frame: str = DEFAULT_BASE_FRAME,
         queue_size: int = 10,
+        timestamp_source: str = 'header',
         node_name: Optional[str] = None,
         auto_init_node: bool = True,
     ):
@@ -71,6 +74,7 @@ class RosEgoReceiver:
         self.map_frame = map_frame
         self.base_frame = base_frame
         self.queue_size = int(queue_size)
+        self.timestamp_source = validate_timestamp_source(timestamp_source)
         self.node_name = node_name or 'morai_alpha_ego'
         self.auto_init_node = bool(auto_init_node)
         self._ego_subscriber = None
@@ -133,6 +137,7 @@ class RosEgoReceiver:
                 self._latest_roll_pitch_deg = (roll, pitch)
 
     def _on_ego(self, msg: EgoVehicleStatus) -> None:
+        received_monotonic_ns = time.monotonic_ns()
         callback = self._callback
         if callback is None:
             return
@@ -144,8 +149,11 @@ class RosEgoReceiver:
             roll, pitch = 0.0, 0.0
         else:
             roll, pitch = roll_pitch
+        timestamp_ns, _raw_header_timestamp_ns = resolve_timestamp_ns(
+            msg.header.stamp, self.timestamp_source, received_monotonic_ns
+        )
         ego_state = EgoState(
-            timestamp_ns=timestamp_to_ns(msg.header.stamp.secs, msg.header.stamp.nsecs),
+            timestamp_ns=timestamp_ns,
             pos_x=msg.position.x,
             pos_y=msg.position.y,
             pos_z=msg.position.z,

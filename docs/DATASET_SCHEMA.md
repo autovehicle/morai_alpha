@@ -47,15 +47,20 @@ only synchronizes and labels them.
 - `sequence_id`: stable string for one continuous collection run (default
   auto-generated as `seq_<YYYYMMDD_HHMMSS>`).
 - `frame_id`: recorder-assigned monotonic integer within a sequence.
-- `timestamp_ns`: signed 64-bit int, **MORAI simulation clock** (not wall
-  clock) — every stream shares this clock domain (`clock_domain:
-  "morai_simulation"` on every record).
+- `timestamp_ns`: signed 64-bit int in the clock selected by
+  `synchronization.timestamp_source`. The active ROS configuration uses
+  monotonic callback arrival time (`clock_domain: "ros_receive_monotonic"`) because the
+  live MORAI ROS bridge was observed publishing sensor-specific header clocks
+  that differ by several seconds. Header mode remains available as
+  `timestamp_source: "header"` when every sensor is confirmed to share the
+  MORAI simulation clock. Camera and LiDAR artifacts retain the original ROS
+  header value as `metadata.raw_header_timestamp_ns`.
 - `sample_timestamp_ns`: timestamp of the anchor stream. **Anchor is LiDAR**
   (`synchronization.anchor_stream: "lidar"` in config/dataset.yaml) — it's the
   slowest stream (~8-10Hz), so every recorded frame is paced by a LiDAR scan.
 - Every accepted frame stores **all 6 streams** (`camera_1`, `camera_2`,
   `camera_3`, `lidar`, `ego`, `objects`) matched within their configured
-  tolerance of the anchor (currently 50ms for camera/ego/objects, 0 for the
+  tolerance of the anchor (currently 80ms for camera/ego/objects, 0 for the
   anchor itself). A frame is only ever recorded once all 6 streams have a
   matching sample — partial frames are silently dropped by the synchronizer,
   never written with a missing/stale stream.
@@ -136,13 +141,13 @@ Same frame as above (abbreviated):
       "path": "sequences/.../camera/camera_1/000200.jpg",
       "timestamp_ns": 1786630537892999936, "source_frame_id": "Camera-1",
       "size_bytes": 155832, "sha256": "783ab4a9...",
-      "clock_domain": "morai_simulation"
+      "clock_domain": "ros_receive_monotonic"
     }
   ],
   "synchronization": {
-    "camera_1": {"timestamp_ns": 1786630537892999936, "offset_ns": -2000128, "source_frame_id": "Camera-1", "clock_domain": "morai_simulation"},
-    "lidar":    {"timestamp_ns": 1786630537895000064, "offset_ns": 0,        "source_frame_id": "Lidar3D-4", "clock_domain": "morai_simulation"},
-    "ego":      {"timestamp_ns": 1786630537894000128, "offset_ns": -999936,  "source_frame_id": null,         "clock_domain": "morai_simulation"}
+    "camera_1": {"timestamp_ns": 1786630537892999936, "offset_ns": -2000128, "source_frame_id": "Camera-1", "clock_domain": "ros_receive_monotonic"},
+    "lidar":    {"timestamp_ns": 1786630537895000064, "offset_ns": 0,        "source_frame_id": "Lidar3D-4", "clock_domain": "ros_receive_monotonic"},
+    "ego":      {"timestamp_ns": 1786630537894000128, "offset_ns": -999936,  "source_frame_id": null,         "clock_domain": "ros_receive_monotonic"}
   }
 }
 ```

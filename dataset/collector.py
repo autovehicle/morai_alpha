@@ -26,7 +26,9 @@ must not be written into the real ``output_root``.
 """
 
 import io
+import queue
 import threading
+import time
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -97,6 +99,7 @@ class DatasetCollector:
         )
 
         sync_cfg = config['synchronization']
+        timestamp_source = sync_cfg.get('timestamp_source', 'header')
         required_streams = ('lidar', 'camera_1', 'camera_2', 'camera_3', 'ego', 'objects')
         self._sync = FrameSynchronizer(
             anchor_stream=sync_cfg['anchor_stream'],
@@ -106,10 +109,26 @@ class DatasetCollector:
         )
         self._sync_lock = threading.Lock()
 
-        self._camera = RosCameraReceiver(sensor_id='camera')
-        self._lidar = RosLidarReceiver(sensor_id='lidar3d')
-        self._ego = RosEgoReceiver()
-        self._gt = RosGtReceiver()
+        sensors_cfg = config['sensors']
+        self._camera = RosCameraReceiver(
+            sensor_id='camera',
+            topic=sensors_cfg['camera']['topic'],
+            timestamp_source=timestamp_source,
+        )
+        self._lidar = RosLidarReceiver(
+            sensor_id='lidar3d',
+            topic=sensors_cfg['lidar']['topic'],
+            timestamp_source=timestamp_source,
+        )
+        self._ego = RosEgoReceiver(
+            topic=sensors_cfg['ego']['topic'],
+            tf_topic=sensors_cfg['ego'].get('tf_topic', '/tf'),
+            timestamp_source=timestamp_source,
+        )
+        self._gt = RosGtReceiver(
+            topic=sensors_cfg['objects']['topic'],
+            timestamp_source=timestamp_source,
+        )
 
         self._frame_lock = threading.Lock()
         self._next_frame_id = 0
@@ -118,6 +137,11 @@ class DatasetCollector:
             'record_errors': 0,
             'unmapped_camera_frames': 0,
         }
+        self._record_queue = queue.Queue()
+        self._record_thread = threading.Thread(
+            target=self._record_worker,
+            daemon=True,
+        )
 
     @property
     def stats(self) -> Mapping[str, int]:
@@ -127,6 +151,8 @@ class DatasetCollector:
         return result
 
     def start(self) -> None:
+        self._record_thread.start()
+
         self._camera.start(self._on_camera)
         self._lidar.start(self._on_lidar)
         self._ego.start(self._on_ego)
@@ -139,6 +165,9 @@ class DatasetCollector:
         self._gt.stop()
         with self._sync_lock:
             self._drain_locked(force=True)
+        self._record_queue.join()
+        self._record_queue.put(None)
+        self._record_thread.join()
 
     # ── receiver callbacks ──────────────────────────────────────────
 
@@ -148,22 +177,32 @@ class DatasetCollector:
             self._stats['unmapped_camera_frames'] += 1
             return
         self._add(stream, TimedSample(
-            timestamp_ns=frame.timestamp_ns, payload=frame,
+            timestamp_ns=frame.metadata['received_monotonic_ns'],
+            payload=frame,
             source_frame_id=frame.source_frame_id,
+            clock_domain='ros_receive_monotonic',
         ))
 
     def _on_lidar(self, frame: SensorFrame) -> None:
         self._add('lidar', TimedSample(
-            timestamp_ns=frame.timestamp_ns, payload=frame,
+            timestamp_ns=frame.metadata['received_monotonic_ns'],
+            payload=frame,
             source_frame_id=frame.source_frame_id,
+            clock_domain='ros_receive_monotonic',
         ))
 
     def _on_ego(self, ego_state) -> None:
-        self._add('ego', TimedSample(timestamp_ns=ego_state.timestamp_ns, payload=ego_state))
+        self._add('ego', TimedSample(
+            timestamp_ns=time.monotonic_ns(),
+            payload=ego_state,
+            clock_domain='ros_receive_monotonic',
+        ))
 
     def _on_gt(self, object_frame) -> None:
         self._add('objects', TimedSample(
-            timestamp_ns=object_frame.timestamp_ns, payload=object_frame,
+            timestamp_ns=time.monotonic_ns(),
+            payload=object_frame,
+            clock_domain='ros_receive_monotonic',
         ))
 
     def _add(self, stream: str, sample: TimedSample) -> None:
@@ -178,7 +217,20 @@ class DatasetCollector:
             bundle = self._sync.pop_next(force=force)
             if bundle is None:
                 return
-            self._record_bundle(bundle)
+            self._record_queue.put(bundle)
+
+    def _record_worker(self) -> None:
+        while True:
+            bundle = self._record_queue.get()
+            try:
+                if bundle is None:
+                    return
+                try:
+                    self._record_bundle(bundle)
+                except Exception:
+                    self._stats['record_errors'] += 1
+            finally:
+                self._record_queue.task_done()
 
     def _record_bundle(self, bundle: SynchronizedBundle) -> None:
         ego_state = bundle.samples['ego'].payload
@@ -188,17 +240,21 @@ class DatasetCollector:
 
         artifacts = []
         for stream in ('camera_1', 'camera_2', 'camera_3'):
-            cam_frame: SensorFrame = bundle.samples[stream].payload
+            cam_sample = bundle.samples[stream]
+            cam_frame: SensorFrame = cam_sample.payload
             artifacts.append(SensorArtifact(
                 modality='camera',
                 sensor_id=stream,
                 extension='jpg',
                 content=cam_frame.payload,
-                timestamp_ns=cam_frame.timestamp_ns,
+                timestamp_ns=cam_sample.timestamp_ns,
                 source_frame_id=cam_frame.source_frame_id,
+                clock_domain=cam_sample.clock_domain,
+                metadata=cam_frame.metadata,
             ))
 
-        lidar_frame: SensorFrame = bundle.samples['lidar'].payload
+        lidar_sample = bundle.samples['lidar']
+        lidar_frame: SensorFrame = lidar_sample.payload
         buffer = io.BytesIO()
         np.save(buffer, lidar_frame.payload)
         artifacts.append(SensorArtifact(
@@ -206,8 +262,10 @@ class DatasetCollector:
             sensor_id='lidar3d',
             extension='npy',
             content=buffer.getvalue(),
-            timestamp_ns=lidar_frame.timestamp_ns,
+            timestamp_ns=lidar_sample.timestamp_ns,
             source_frame_id=lidar_frame.source_frame_id,
+            clock_domain=lidar_sample.clock_domain,
+            metadata=lidar_frame.metadata,
         ))
 
         with self._frame_lock:
