@@ -21,12 +21,9 @@ official Velodyne driver; this local decoder does not use rosbridge/WebSocket.
 The coordinate convention remains intentionally unverified until it is checked
 in the competition MORAI environment.
 
-See:
-
-- `docs/REPOSITORY_AUDIT.md` for the KEEP/REFACTOR/LEGACY/UNKNOWN audit;
-- `docs/DATASET_SCHEMA.md` for the draft repository-to-TransFuser contract;
-- `docs/COORDINATE_CONVENTIONS.md` for the coordinate validation checklist.
-- `docs/UDP_COLLECTION_SETUP.md` for the MORAI/WSL UDP setup and smoke tests.
+See `docs/DATASET_SCHEMA.md` for the repository-to-TransFuser Dataset
+contract, sensor conventions, synchronization policy, and remaining
+calibration items.
 
 The existing RL/ROACH files remain in place as legacy candidates. No legacy
 code or collected artifact has been deleted during the first refactoring pass.

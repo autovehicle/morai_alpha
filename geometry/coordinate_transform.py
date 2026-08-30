@@ -1,7 +1,7 @@
 """Pure coordinate transforms, independent from OpenCV/BEV rendering.
 
 The default values represent the assumptions found in the old renderer. They
-are deliberately marked unverified; see ``docs/COORDINATE_CONVENTIONS.md``.
+are guarded by an explicit verification flag; see ``docs/DATASET_SCHEMA.md``.
 """
 
 import math

@@ -89,7 +89,7 @@ only synchronizes and labels them.
 
 - **Coordinate frame**: ego-relative, **x = forward, y = left, z = up**
   (metres). Empirically confirmed (not just assumed) against real MORAI
-  motion/object placement — see `docs/COORDINATE_CONVENTIONS.md`.
+  motion/object placement.
 - `size_lwh_m`: `[length, width, height]` — confirmed against a real vehicle
   NPC (`4.69 x 2.20 x 1.60`, matches typical sedan dimensions).
 - `yaw_ego_rad`: object heading relative to Ego yaw, **radians, positive
@@ -99,7 +99,7 @@ only synchronizes and labels them.
   `pedestrian_list`/`obstacle_list` map to `1`/`0`/`2` respectively).
 - `z` reference point: **not** ground/tire-contact and **not** full-body
   centre — empirically ~0.32-0.35m above the ground plane (see
-  `docs/COORDINATE_CONVENTIONS.md`'s LiDAR ground-plane check). Only matters
+  the LiDAR-derived ground-plane check). Only matters
   if you need precise 3D box height; irrelevant for 2D/BEV.
 - Frame-to-frame `obj_id` continuity is **not guaranteed** — it's MORAI's raw
   object id, not a verified persistent track id.
@@ -198,7 +198,7 @@ wasn't corrupted/truncated without re-reading the whole dataset.
 `calibration` is `null` for now — per-camera intrinsics/extrinsics aren't
 written into the dataset yet (see below). The coordinate convention name
 keeps its `__PROVISIONAL` suffix for now even though it's been empirically
-verified (see `docs/COORDINATE_CONVENTIONS.md`); the underlying
+verified; the underlying
 `config/dataset.yaml`'s `coordinate_convention.verified` flag is `true`.
 
 ## `manifest.jsonl`

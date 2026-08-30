@@ -6,7 +6,7 @@ object topics this collector subscribes to.
 
 Real collection (writing labels that matter) requires the MORAI
 coordinate convention to be verified first — see
-docs/COORDINATE_CONVENTIONS.md and config/dataset.yaml's
+docs/DATASET_SCHEMA.md and config/dataset.yaml's
 ``coordinate_convention.verified`` flag. Until then, only
 --no-strict-convention smoke tests are meaningful, and those must not
 point at the real --output-root.

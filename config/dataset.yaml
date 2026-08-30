@@ -45,8 +45,7 @@ sensors:
   # current WSL IP (`hostname -I`), not 127.0.0.1.
   #
   # The older UDP transport (sensors/camera_receiver.py, network/UDP/) is
-  # still present and working, just not the active default here — see
-  # docs/UDP_COLLECTION_SETUP.md if switching back.
+  # still present, but is not the active default here.
   camera:
     transport: "ros_native"
     topic: "/image_jpeg/compressed"

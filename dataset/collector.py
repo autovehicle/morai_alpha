@@ -18,8 +18,8 @@ Coordinate safety gate: ``GTConverter`` refuses to run (raises
 ``config/dataset.yaml``'s ``coordinate_convention.verified`` is ``false``.
 This collector defaults to ``strict_convention=True``, i.e. it inherits
 that refusal — real collection cannot start until the MORAI coordinate
-convention has been verified (see ``docs/COORDINATE_CONVENTIONS.md``) and
-the config flipped to ``verified: true``. Passing
+convention has been verified (see ``docs/DATASET_SCHEMA.md``) and the config
+flipped to ``verified: true``. Passing
 ``strict_convention=False`` explicitly bypasses the gate for wiring/smoke
 tests only; frames recorded that way are not valid training labels and
 must not be written into the real ``output_root``.
